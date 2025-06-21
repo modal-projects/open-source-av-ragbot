@@ -44,6 +44,7 @@ from server.bot.animation import TalkingAnimation, get_frames
 
 from ..services.stt.parakeet_service import ParakeetSTTService
 from ..services.tts.chatterbox_service import ChatterboxTTSService
+from ..services.rag.structured_rag_llm_service import StructuredRAGLLMService
 
 try:
     logger.remove(0)
@@ -192,7 +193,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 "stream": True,
             }
         )
-        llm = OpenAILLMService(
+        llm = StructuredRAGLLMService(
             # To use OpenAI
             api_key=vllm_api_key,
             # Or, to use a local vLLM (or similar) api server

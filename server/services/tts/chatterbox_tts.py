@@ -7,8 +7,7 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
-        "chatterbox-streaming @ git+https://github.com/shababo/chatterbox-streaming.git",
-        # "chatterbox-streaming",
+        "chatterbox-streaming", # @ git+https://github.com/shababo/chatterbox-streaming.git",
         "fastapi[standard]",
         "torchaudio",
         "transformers",

@@ -49,7 +49,7 @@ class ChatterboxTTSService(TTSService):
         **kwargs,
     ):
         super().__init__(
-            aggregate_sentences=False,
+            aggregate_sentences=True,
             push_text_frames=True,
             push_stop_frames=True,
             # pause_frame_processing=True,

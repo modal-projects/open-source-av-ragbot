@@ -708,17 +708,17 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                                         break
                             
                             # Final chunk
+                            modal_structured_data = {
+                                "code_blocks": structured_data.get("code_blocks", []) if structured_data else [],
+                                "links": structured_data.get("links", []) if structured_data else [],
+                                "original_query": current_user_message,
+                            }
                             final_chunk = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",
                                 "created": created_timestamp,
                                 "model": request.model,
-                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                                "modal_structured_data": {
-                                    "code_blocks": structured_data.get("code_blocks", []) if structured_data else [],
-                                    "links": structured_data.get("links", []) if structured_data else [],
-                                    "original_query": current_user_message,
-                                }
+                                "choices": [{"index": 0, "delta": f"<struct>{json.dumps(modal_structured_data)}</struct>", "finish_reason": "stop"}],
                             }
                             yield f"data: {json.dumps(final_chunk)}\n\n"
                             yield "data: [DONE]\n\n"
