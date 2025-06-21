@@ -3,10 +3,8 @@
 
 
 import asyncio
-import importlib
-from typing import Literal
-
 import modal
+
 
 
 # container specifications for the FastAPI web server
@@ -29,6 +27,8 @@ bot_image = (
 
 app = modal.App("moe-and-dal-ragbot")
 
+container_addresses = modal.Dict.from_name("ragbot_container_address", create_if_missing=True)
+
 @app.function(image=bot_image, min_containers=1, gpu="L40S")
 async def bot_runner(d: modal.Dict):
     """Launch the provided bot process, providing the given room URL and token for the bot to join.
@@ -43,6 +43,9 @@ async def bot_runner(d: modal.Dict):
     from pipecat.transports.network.webrtc_connection import SmallWebRTCConnection, IceServer
 
     from .bot.moe_and_dal_bot import run_bot
+
+
+    await container_addresses.put.aio("bot_runner", i6pn_addr)
 
     try:
 

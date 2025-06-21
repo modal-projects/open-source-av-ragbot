@@ -34,18 +34,26 @@ class Chatterbox:
 
     @modal.fastapi_endpoint(docs=True, method="POST")
     def tts(self, prompt: str):
+        import time
+        
+        method_start = time.time()
+        
         # Generate audio waveform from the input text
         print(f"Generating audio for prompt: {prompt}")
+        generation_start = time.time()
         wav = self.model.generate(
             prompt,
             audio_prompt_path=self.audio_prompt_path,
         )
+        generation_end = time.time()
+        print(f"⏱️  Audio generation took: {generation_end - generation_start:.3f} seconds")
 
         # Create an in-memory buffer to store the WAV file
         buffer = io.BytesIO()
 
         # Save the generated audio to the buffer in WAV format
         # Uses the model's sample rate and WAV format
+        save_start = time.time()
         ta.save(
             buffer,
             wav,
@@ -54,9 +62,22 @@ class Chatterbox:
             encoding="PCM_S",
             bits_per_sample=16,
         )
+        save_end = time.time()
+        print(f"⏱️  Audio saving took: {save_end - save_start:.3f} seconds")
 
-        print("Chatterbox response generated.")
         buffer.seek(0)
+        
+        # Read the entire buffer into memory
+        read_start = time.time()
+        audio_content = buffer.read()
+        read_end = time.time()
+        print(f"⏱️  Buffer reading took: {read_end - read_start:.3f} seconds")
+        
+        method_end = time.time()
+        print(f"⏱️  Total TTS method took: {method_end - method_start:.3f} seconds")
+        print(f"📊 Audio size: {len(audio_content)} bytes")
+        print("Chatterbox response generated.")
+        
         # def generate_audio_chunks(buffer):
         #     buffer.seek(0)  # Reset to beginning
         #     while True:
@@ -68,7 +89,7 @@ class Chatterbox:
         # Return the audio as a streaming response with appropriate MIME type.
         # This allows for browsers to playback audio directly.
         return Response(
-            content=buffer.read(),
+            content=audio_content,
             media_type="audio/wav",
             headers={"Content-Disposition": 'attachment; filename="output.wav"'},
         )

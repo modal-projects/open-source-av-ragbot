@@ -70,6 +70,7 @@ class Parakeet:
             model_name="nvidia/parakeet-tdt-0.6b-v2", map_location="cpu"
         )
 
+
     @modal.enter(snap=False)
     def load_model(self):
         import time
@@ -80,10 +81,12 @@ class Parakeet:
         print(
             f"🚀 Model loaded! Time taken: {self.end_time - self.start_time:.2f} seconds"
         )
+        
 
     @modal.method()
     def transcribe(self, audio_bytes: bytes) -> str:
         import numpy as np
+
 
         audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
 

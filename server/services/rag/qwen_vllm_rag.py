@@ -95,21 +95,31 @@ def create_vector_index():
     from llama_index.embeddings.huggingface import HuggingFaceEmbedding
     from llama_index.vector_stores.chroma import ChromaVectorStore
 
+    index_start = time.perf_counter()
+    
     torch.set_float32_matmul_precision("high")
     
     # Load embedding model
+    embed_start = time.perf_counter()
     embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+    embed_time = time.perf_counter() - embed_start
+    print(f"⏱️ [Index] Embedding model loaded in {embed_time:.2f}s")
     
     # Load Modal docs
+    doc_start = time.perf_counter()
     with open("/modal_docs/modal_docs.txt") as f:
         document = Document(text=f.read())
+    doc_time = time.perf_counter() - doc_start
+    print(f"⏱️ [Index] Modal docs loaded in {doc_time:.3f}s, {len(document.text)} chars")
     
     # Setup ChromaDB
+    chroma_start = time.perf_counter()
     chroma_client = chromadb.PersistentClient("/chroma")
     
     try:
         chroma_collection = chroma_client.get_collection("modal_rag")
-        print("Vector index already exists, skipping creation.")
+        total_time = time.perf_counter() - index_start
+        print(f"Vector index already exists, skipping creation. Total time: {total_time:.3f}s")
         return
     except Exception:
         chroma_collection = chroma_client.create_collection("modal_rag")
@@ -117,11 +127,18 @@ def create_vector_index():
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
         
+        # Create index with timing
+        vector_start = time.perf_counter()
         index = VectorStoreIndex.from_documents(
             [document], storage_context=storage_context, embed_model=embedding
         )
+        vector_time = time.perf_counter() - vector_start
+        chroma_time = time.perf_counter() - chroma_start
+        total_time = time.perf_counter() - index_start
         
-        print("Vector index created successfully!")
+        print(f"⏱️ [Index] Vector index creation took {vector_time:.2f}s")
+        print(f"⏱️ [Index] ChromaDB setup took {chroma_time:.2f}s") 
+        print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
 
 @app.cls(
     volumes={
@@ -141,6 +158,8 @@ class VLLMRAGServer:
     
     @modal.enter()
     def setup(self):
+        setup_start = time.perf_counter()
+        
         import torch
         from llama_index.core import VectorStoreIndex
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -169,8 +188,11 @@ class VLLMRAGServer:
         seed_everything()
         
         # Initialize embedding model
+        embed_start = time.perf_counter()
         print("Loading embedding model...")
         self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+        embed_time = time.perf_counter() - embed_start
+        print(f"⏱️ Embedding model loaded in {embed_time:.2f}s")
         
         # System prompt
         self.prompt = (
@@ -182,11 +204,15 @@ class VLLMRAGServer:
         )
 
         # Initialize vLLM AsyncLLMEngine
+        vllm_start = time.perf_counter()
         print("Loading vLLM AsyncLLMEngine...")
         self.model_path = f"/models/{LLM_MODEL}"
         
         # Load tokenizer
+        tokenizer_start = time.perf_counter()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+        tokenizer_time = time.perf_counter() - tokenizer_start
+        print(f"⏱️ Tokenizer loaded in {tokenizer_time:.2f}s")
         
         # Setup vLLM engine
         engine_kwargs = {
@@ -196,6 +222,7 @@ class VLLMRAGServer:
             "max_model_len": 8192,  # Reasonable context length for RAG (must be <= max_num_batched_tokens)
         }
         
+        engine_start = time.perf_counter()
         print(f"Setting up vLLM engine with kwargs: {engine_kwargs}")
         self.vllm_engine = AsyncLLMEngine.from_engine_args(
             AsyncEngineArgs(
@@ -204,8 +231,12 @@ class VLLMRAGServer:
                 **engine_kwargs,
             )
         )
+        engine_time = time.perf_counter() - engine_start
+        vllm_time = time.perf_counter() - vllm_start
+        print(f"⏱️ vLLM engine setup in {engine_time:.2f}s, total vLLM loading: {vllm_time:.2f}s")
         
         # Setup vector store
+        vector_start = time.perf_counter()
         print("Loading vector store...")
         chroma_client = chromadb.PersistentClient("/chroma")
         chroma_collection = chroma_client.get_collection("modal_rag")
@@ -216,15 +247,24 @@ class VLLMRAGServer:
             vector_store, embed_model=self.embedding
         )
         self.retriever = index.as_retriever(similarity_top_k=5)
+        vector_time = time.perf_counter() - vector_start
+        print(f"⏱️ Vector store setup in {vector_time:.2f}s")
         
         # Setup FastAPI app
+        fastapi_start = time.perf_counter()
         self.setup_fastapi()
+        fastapi_time = time.perf_counter() - fastapi_start
+        print(f"⏱️ FastAPI setup in {fastapi_time:.2f}s")
 
         # Warm up vLLM engine
+        warmup_start = time.perf_counter()
         print("Warming up vLLM engine...")
         asyncio.run(self.warm_up_vllm())
+        warmup_time = time.perf_counter() - warmup_start
+        print(f"⏱️ vLLM warmup in {warmup_time:.2f}s")
         
-        print("VLLMRAGServer setup complete!")
+        setup_time = time.perf_counter() - setup_start
+        print(f"🚀 VLLMRAGServer setup complete in {setup_time:.2f}s total!")
     
     async def warm_up_vllm(self):
         """Warm up the vLLM engine with a simple completion."""
@@ -239,6 +279,8 @@ class VLLMRAGServer:
         from dataclasses import asdict
         from vllm import SamplingParams
         from vllm.utils import random_uuid
+        
+        gen_start = time.perf_counter()
         
         # Apply chat template if available
         if get_system_prompt() and hasattr(self.tokenizer, "apply_chat_template"):
@@ -261,6 +303,7 @@ class VLLMRAGServer:
         
         if stream:
             # For streaming, return the generator
+            print(f"⏱️ [vLLM] Starting streaming generation for {len(formatted_prompt)} chars")
             return self.vllm_engine.generate(
                 formatted_prompt,
                 sampling_params=sampling_params,
@@ -268,6 +311,7 @@ class VLLMRAGServer:
             )
         else:
             # For non-streaming, collect all results
+            print(f"⏱️ [vLLM] Starting non-streaming generation for {len(formatted_prompt)} chars")
             results_generator = self.vllm_engine.generate(
                 formatted_prompt,
                 sampling_params=sampling_params,
@@ -279,17 +323,25 @@ class VLLMRAGServer:
             
             # Return the final generation result
             outputs = [asdict(output) for output in generation.outputs]
-            return outputs[0]['text'] if outputs else ""
+            result = outputs[0]['text'] if outputs else ""
+            gen_time = time.perf_counter() - gen_start
+            print(f"⏱️ [vLLM] Non-streaming generation completed in {gen_time:.3f}s, output: {len(result)} chars")
+            return result
     
     async def generate_structured_response(self, question: str, conversation_history: str = ""):
         """Generate a structured response using vLLM with RAG context."""
 
         from server.services.rag.models import ModalLLMOutput
 
+        total_start = time.perf_counter()
+        
         try:
             # Get relevant context from RAG
+            rag_start = time.perf_counter()
             retrieved_nodes = self.retriever.retrieve(question)
             context_str = "\n\n".join([node.text for node in retrieved_nodes])
+            rag_time = time.perf_counter() - rag_start
+            print(f"⏱️ RAG retrieval took {rag_time:.3f}s for query: {question[:50]}...")
             
             # Create structured output prompt with conversation history
             history_context = ""
@@ -316,13 +368,17 @@ You MUST respond with ONLY the following JSON format (no additional text):
 IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text."""
 
             # Use vLLM to generate structured response
+            vllm_start = time.perf_counter()
             raw_response = await self.generate_vllm_completion(
                 prompt_template,
                 max_tokens=1024,
                 temperature=0.1
             )
+            vllm_time = time.perf_counter() - vllm_start
+            print(f"⏱️ vLLM generation took {vllm_time:.3f}s")
             
             # Parse JSON response
+            parse_start = time.perf_counter()
             import re
             import json
             
@@ -339,15 +395,22 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 
                 try:
                     parsed_json = json.loads(json_str)
-                    return ModalLLMOutput(
+                    result = ModalLLMOutput(
                         answer_for_tts=parsed_json.get("answer_for_tts", ""),
                         code_blocks=parsed_json.get("code_blocks", []),
                         links=parsed_json.get("links", [])
                     )
+                    parse_time = time.perf_counter() - parse_start
+                    total_time = time.perf_counter() - total_start
+                    print(f"⏱️ JSON parsing took {parse_time:.3f}s, total response time: {total_time:.3f}s")
+                    return result
                 except json.JSONDecodeError as e:
                     print(f"JSON parsing failed: {e}")
             
             # Fallback: treat raw response as TTS content
+            parse_time = time.perf_counter() - parse_start
+            total_time = time.perf_counter() - total_start
+            print(f"⏱️ JSON fallback parsing took {parse_time:.3f}s, total response time: {total_time:.3f}s")
             return ModalLLMOutput(
                 answer_for_tts=raw_response,
                 code_blocks=[],
@@ -355,7 +418,8 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             )
             
         except Exception as e:
-            print(f"Structured response failed: {e}")
+            total_time = time.perf_counter() - total_start
+            print(f"Structured response failed: {e}, total time: {total_time:.3f}s")
             # Fallback to basic completion
             basic_prompt = f"{self.prompt} {question}"
             fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=512)
@@ -370,10 +434,15 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
         import re
         import json
         
+        total_start = time.perf_counter()
+        
         try:
             # Get RAG context
+            rag_start = time.perf_counter()
             retrieved_nodes = self.retriever.retrieve(question)
             context_str = "\n\n".join([node.text for node in retrieved_nodes])
+            rag_time = time.perf_counter() - rag_start
+            print(f"⏱️ [Streaming] RAG retrieval took {rag_time:.3f}s")
             
             # Create structured prompt with conversation history
             history_context = ""
@@ -400,21 +469,30 @@ You MUST respond with ONLY the following JSON format (no additional text):
 IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text."""
 
             # Stream the vLLM response
+            vllm_start = time.perf_counter()
             streaming_generator = await self.generate_vllm_completion(
                 prompt_template,
                 max_tokens=1024,
                 temperature=0.1,
                 stream=True
             )
+            print(f"⏱️ [Streaming] vLLM generator setup took {time.perf_counter() - vllm_start:.3f}s")
             
             # State for incremental JSON parsing
             accumulated_text = ""
             tts_content_streamed = False
+            first_token_time = None
+            token_count = 0
             
             async for generation in streaming_generator:
                 # Extract text from vLLM generation
                 if generation.outputs:
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
+                        print(f"⏱️ [Streaming] First token took {first_token_time - vllm_start:.3f}s")
+                    
                     accumulated_text = generation.outputs[0].text
+                    token_count += 1
                     
                     # Try to parse JSON incrementally
                     if not tts_content_streamed and '"answer_for_tts"' in accumulated_text:
@@ -435,6 +513,8 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                             code_blocks = parsed_json.get("code_blocks", [])
                             links = parsed_json.get("links", [])
                             
+                            total_time = time.perf_counter() - total_start
+                            print(f"⏱️ [Streaming] Complete response took {total_time:.3f}s, {token_count} tokens")
                             yield {
                                 "type": "structured_data",
                                 "code_blocks": code_blocks,
@@ -459,6 +539,9 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                         
                         if tts_content:
                             yield {"type": "tts_content", "content": tts_content}
+                        
+                        total_time = time.perf_counter() - total_start
+                        print(f"⏱️ [Streaming] Final JSON parsing took {total_time:.3f}s")
                         yield {
                             "type": "structured_data",
                             "code_blocks": code_blocks,
@@ -471,18 +554,23 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 
                 # Fallback: use accumulated text as TTS content
                 if accumulated_text.strip():
+                    total_time = time.perf_counter() - total_start
+                    print(f"⏱️ [Streaming] Text fallback took {total_time:.3f}s")
                     yield {"type": "tts_content", "content": accumulated_text.strip()}
                     yield {"type": "structured_data", "code_blocks": [], "links": [], "complete": True}
                     return
             
             # Ultimate fallback
+            total_time = time.perf_counter() - total_start
+            print(f"⏱️ [Streaming] Ultimate fallback after {total_time:.3f}s")
             basic_prompt = f"{self.prompt} {question}"
             fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=512)
             yield {"type": "tts_content", "content": fallback_response}
             yield {"type": "structured_data", "code_blocks": [], "links": [], "complete": True}
             
         except Exception as e:
-            print(f"vLLM streaming error: {e}")
+            total_time = time.perf_counter() - total_start
+            print(f"vLLM streaming error: {e}, total time: {total_time:.3f}s")
             # Error fallback
             try:
                 basic_prompt = f"{self.prompt} {question}"
@@ -587,22 +675,12 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                             }
                             yield f"data: {json.dumps(first_chunk)}\n\n"
                             
-                            # Generate streaming structured response
-                            async def collect_streaming_data():
-                                results = []
-                                async for item in self.generate_streaming_structured_response(current_user_message, formatted_history):
-                                    results.append(item)
-                                return results
-                            
-                            # Collect streaming results directly 
-                            streaming_results = await collect_streaming_data()
-                            
-                            tts_content = ""
+                            # Process streaming results in real-time
                             structured_data = None
                             
-                            # Process results
-                            for result in streaming_results:
+                            async for result in self.generate_streaming_structured_response(current_user_message, formatted_history):
                                 if result["type"] == "tts_content":
+                                    # Stream TTS content as it becomes available
                                     tts_content = result["content"]
                                     words = tts_content.split()
                                     
@@ -625,6 +703,9 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                                         
                                 elif result["type"] == "structured_data":
                                     structured_data = result
+                                    # If this is the completion signal, send final chunk
+                                    if result.get("complete", False):
+                                        break
                             
                             # Final chunk
                             final_chunk = {
