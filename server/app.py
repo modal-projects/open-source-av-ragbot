@@ -44,9 +44,6 @@ async def bot_runner(d: modal.Dict):
 
     from .bot.moe_and_dal_bot import run_bot
 
-
-    await container_addresses.put.aio("bot_runner", i6pn_addr)
-
     try:
 
         offer = await d.get.aio("offer")
