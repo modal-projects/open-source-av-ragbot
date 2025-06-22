@@ -90,12 +90,13 @@ body {
   .content-wrapper {
     display: flex;
     gap: 24px;
-    min-height: 400px;
+    min-height: 800px; /* Fixed height for now to ensure propagation */
     width: 100%;
+    justify-content: space-between;
   }
   
   .media-container {
-    flex: 1;
+    flex: 0 0 35%;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -105,13 +106,21 @@ body {
   }
   
   .conversation-panel {
-    flex: 0 0 400px;
+    flex: 0 0 55%;
     display: flex;
     flex-direction: column;
     background-color: #f8f9fa;
     border-radius: 8px;
-    max-height: 600px;
+    max-height: 750px;
     overflow: hidden;
+    border: 2px solid transparent;
+    transition: border-color 0.2s ease;
+  }
+
+  .conversation-panel:focus,
+  .conversation-panel.focused {
+    border-color: #007bff;
+    outline: none;
   }
   
   .conversation-header {
@@ -130,11 +139,33 @@ body {
   
   #conversation-log {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: scroll; /* Always show scrollbar */
+    scrollbar-gutter: stable; /* Reserve space for scrollbar */
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 0; /* Ensure flex child can shrink and show scrollbar */
+    max-height: 100%; /* Ensure it respects parent constraints */
+  }
+
+  /* Webkit browsers scrollbar styling */
+  #conversation-log::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  #conversation-log::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+
+  #conversation-log::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+
+  #conversation-log::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
   }
   
   /* Message containers */
@@ -169,6 +200,29 @@ body {
     margin-right: 8px;
     font-size: 14px;
   }
+
+  .timestamp-callout {
+    display: inline-block;
+    background-color: #e9ecef;
+    color: #6c757d;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 8px;
+    margin: 4px 0;
+  }
+
+  .user-message .timestamp-callout {
+    background-color: rgba(0, 123, 255, 0.1);
+    color: #0066cc;
+    margin-left: 8px;
+  }
+
+  .bot-message .timestamp-callout {
+    background-color: rgba(40, 167, 69, 0.1);
+    color: #28a745;
+    margin-bottom: 8px;
+  }
   
   .message-content {
     color: #212529;
@@ -178,6 +232,10 @@ body {
   
   .message-content:last-child {
     margin-bottom: 12px;
+  }
+  
+  .message-content:empty {
+    margin-bottom: 0;
   }
   
   .message-text {
@@ -196,6 +254,10 @@ body {
     padding-bottom: 0;
   }
   
+  .message-text:empty {
+    display: none;
+  }
+  
   .user-message .message-text {
     border-left-color: rgba(0, 123, 255, 0.2);
   }
@@ -209,6 +271,10 @@ body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+  
+  .message-content:empty + .message-extras {
+    margin-top: 8px;
   }
   
   .empty-state {

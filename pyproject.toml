@@ -6,4 +6,5 @@ dependencies = [
     "loguru>=0.7.3",
     "modal>=1.0.4",
     "pydantic>=2.11.7",
+    "pydub>=0.25.1",
 ]

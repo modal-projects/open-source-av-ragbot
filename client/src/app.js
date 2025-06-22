@@ -48,11 +48,17 @@ class ChatbotClient {
     this.mediaContainer = document.querySelector('.media-container');
     this.userVideoContainer = document.getElementById('user-video-container');
     this.conversationLog = document.getElementById('conversation-log');
+    this.conversationPanel = document.querySelector('.conversation-panel');
     
     // Track current bot message for adding extras (code blocks, links)
     this.currentBotMessage = null;
     // Track the last message source for grouping
     this.lastMessageSource = null;
+    // Buffer for code blocks and links until TTS stops
+    this.pendingCodeBlocks = [];
+    this.pendingLinks = [];
+    // Flag to track if bot is currently speaking
+    this.botIsSpeaking = false;
 
     // Create an audio element for bot's voice output
     this.botAudio = document.createElement('audio');
@@ -103,6 +109,9 @@ class ChatbotClient {
 
     // Display user's webcam in user-video-container
     this.setupUserWebcam();
+
+    // Add focus tracking for conversation panel
+    this.setupConversationFocus();
   }
 
   /**
@@ -183,6 +192,34 @@ class ChatbotClient {
         onBotTtsText: (data) => {
           this.addBotMessage(data.text);
           this.log(`Bot: ${data.text}`);
+        },
+        onBotStartedSpeaking: () => {
+          this.log('Bot started speaking event fired');
+          
+          // Only proceed if bot wasn't already speaking
+          if (!this.botIsSpeaking) {
+            this.log('Bot was not speaking - setting timestamp and creating container if needed');
+            
+            // Create container only if one doesn't exist
+            if (!this.currentBotMessage) {
+              this.log('No current bot message - creating new container');
+              this.createNewBotMessageForExtras(); // Create empty container
+              this.lastMessageSource = 'bot';
+            } else {
+              this.log('Bot message container already exists - using existing one');
+            }
+            
+            // Always set timestamp when bot starts speaking
+            this.setBotMessageTimestamp();
+            this.botIsSpeaking = true;
+          } else {
+            this.log('Bot was already speaking - ignoring duplicate start event');
+          }
+        },
+        onBotTtsStopped: () => {
+          this.log('Bot TTS stopped - processing buffered extras and resetting speaking flag');
+          this.processPendingExtras();
+          this.botIsSpeaking = false;
         },
         // Error handling
         onMessageError: (error) => {
@@ -439,13 +476,81 @@ class ChatbotClient {
   }
 
   /**
+   * Set up focus tracking for conversation panel
+   */
+  setupConversationFocus() {
+    if (!this.conversationPanel || !this.conversationLog) return;
+
+    // Add tabindex to make conversation panel focusable
+    this.conversationPanel.setAttribute('tabindex', '0');
+
+    // Add focus event listeners
+    this.conversationPanel.addEventListener('focusin', () => {
+      this.conversationPanel.classList.add('focused');
+      this.log('Conversation panel focused');
+    });
+
+    this.conversationPanel.addEventListener('focusout', () => {
+      this.conversationPanel.classList.remove('focused');
+      this.log('Conversation panel lost focus');
+    });
+
+    // Also track when user is actively scrolling
+    this.conversationLog.addEventListener('scroll', () => {
+      // Add focused class when user interacts with scroll
+      this.conversationPanel.classList.add('focused');
+      
+      // Remove focus after a brief delay
+      clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = setTimeout(() => {
+        if (!this.conversationPanel.matches(':focus-within')) {
+          this.conversationPanel.classList.remove('focused');
+        }
+      }, 2000);
+    });
+  }
+
+  /**
    * Handle server messages for code blocks and links
    */
   handleServerMessage(data) {
     if (data.type === 'code_blocks' && data.payload) {
-      this.addCodeBlocksToCurrentBotMessage(data.payload);
+      // Buffer code blocks until TTS stops
+      this.pendingCodeBlocks.push(...data.payload);
+      this.log(`Buffered ${data.payload.length} code block(s)`);
     } else if (data.type === 'links' && data.payload) {
-      this.addLinksToCurrentBotMessage(data.payload);
+      // Buffer links until TTS stops
+      this.pendingLinks.push(...data.payload);
+      this.log(`Buffered ${data.payload.length} link(s)`);
+    }
+  }
+
+  /**
+   * Process buffered code blocks and links when TTS stops
+   */
+  processPendingExtras() {
+    let hasContent = false;
+
+    // Add buffered code blocks
+    if (this.pendingCodeBlocks.length > 0) {
+      this.addCodeBlocksToCurrentBotMessage(this.pendingCodeBlocks);
+      this.log(`Displayed ${this.pendingCodeBlocks.length} buffered code block(s)`);
+      this.pendingCodeBlocks = [];
+      hasContent = true;
+    }
+
+    // Add buffered links
+    if (this.pendingLinks.length > 0) {
+      this.addLinksToCurrentBotMessage(this.pendingLinks);
+      this.log(`Displayed ${this.pendingLinks.length} buffered link(s)`);
+      this.pendingLinks = [];
+      hasContent = true;
+    }
+
+    // Keep user at bottom if they were there before adding buffered content
+    if (hasContent) {
+      this.log(`Processing pending extras completed - maintaining bottom position if appropriate`);
+      this.maintainBottomPosition(this.conversationLog);
     }
   }
 
@@ -469,9 +574,12 @@ class ChatbotClient {
       // Create new user message container
       this.createNewUserMessage(text);
       this.lastMessageSource = 'user';
+      // Clear current bot message so future extras create a new bot container
+      this.currentBotMessage = null;
     }
 
-    this.scrollToBottom(this.conversationLog);
+    // Keep user at bottom if they were there before adding message
+    this.maintainBottomPosition(this.conversationLog);
   }
 
   /**
@@ -486,33 +594,43 @@ class ChatbotClient {
       emptyState.remove();
     }
 
-    // Check if we should group with the last message
-    if (this.lastMessageSource === 'bot') {
+    // Check if we should group with the last message or if we have an existing container from TTS started
+    if (this.lastMessageSource === 'bot' || (this.currentBotMessage && this.currentBotMessage.classList.contains('bot-message'))) {
       // Append to existing bot message container
+      this.log('Adding text to existing bot message container');
       this.appendToLastMessage(text);
+      this.lastMessageSource = 'bot';
     } else {
-      // Create new bot message container
-      this.createNewBotMessage(text);
+      // Create new bot message container (shouldn't happen often since TTS started should create it)
+      this.log('Creating new bot message container from addBotMessage');
+      this.createNewBotMessageForExtras(text);
       this.lastMessageSource = 'bot';
     }
 
-    this.scrollToBottom(this.conversationLog);
+    // Keep user at bottom if they were there before adding message
+    this.maintainBottomPosition(this.conversationLog);
   }
 
   /**
    * Create a new user message container
    */
   createNewUserMessage(text) {
+    // Timestamp when user stops speaking (final transcript received)
+    const userStoppedTime = new Date().toLocaleTimeString();
+    this.log(`User stopped speaking at ${userStoppedTime}`);
+    
     const messageEl = document.createElement('div');
     messageEl.className = 'message-container user-message';
     messageEl.innerHTML = `
       <div class="message-header">
         <span class="message-avatar">👤</span>
         <span>You</span>
-        <span style="margin-left: auto; font-size: 10px;">${new Date().toLocaleTimeString()}</span>
       </div>
       <div class="message-content">
-        <div class="message-text">${this.escapeHtml(text)}</div>
+        <div class="message-text">
+          ${this.escapeHtml(text)}
+          <span class="timestamp-callout">${userStoppedTime}</span>
+        </div>
       </div>
     `;
 
@@ -523,22 +641,89 @@ class ChatbotClient {
    * Create a new bot message container
    */
   createNewBotMessage(text) {
+    // Timestamp when bot starts speaking for this container
+    const botStartTime = new Date().toLocaleTimeString();
+    this.log(`Bot started speaking at ${botStartTime}`);
+    
     const messageEl = document.createElement('div');
     messageEl.className = 'message-container bot-message';
+    
+    const messageContentHtml = text.trim() ? 
+      `<div class="message-content">
+        <div><span class="timestamp-callout">${botStartTime}</span></div>
+        <div class="message-text">${this.escapeHtml(text)}</div>
+      </div>` : 
+      `<div class="message-content">
+        <div><span class="timestamp-callout">${botStartTime}</span></div>
+      </div>`;
+    
     messageEl.innerHTML = `
       <div class="message-header">
         <span class="message-avatar">🤖</span>
         <span>Modal Assistant</span>
-        <span style="margin-left: auto; font-size: 10px;">${new Date().toLocaleTimeString()}</span>
       </div>
-      <div class="message-content">
-        <div class="message-text">${this.escapeHtml(text)}</div>
-      </div>
+      ${messageContentHtml}
       <div class="message-extras"></div>
     `;
 
     this.conversationLog.appendChild(messageEl);
     this.currentBotMessage = messageEl;
+  }
+
+  /**
+   * Create a new bot message container (no timestamp yet, will be set by onBotTtsStarted)
+   */
+  createNewBotMessageForExtras(text = "") {
+    this.log(`Creating bot message container with text: "${text}" - will timestamp when TTS starts`);
+    
+    const messageEl = document.createElement('div');
+    messageEl.className = 'message-container bot-message';
+    
+    const messageContentHtml = text.trim() ? 
+      `<div class="message-content">
+        <div class="timestamp-placeholder" style="display: none;"></div>
+        <div class="message-text">${this.escapeHtml(text)}</div>
+      </div>` : 
+      `<div class="message-content">
+        <div class="timestamp-placeholder" style="display: none;"></div>
+      </div>`;
+    
+    messageEl.innerHTML = `
+      <div class="message-header">
+        <span class="message-avatar">🤖</span>
+        <span>Modal Assistant</span>
+      </div>
+      ${messageContentHtml}
+      <div class="message-extras"></div>
+    `;
+
+    this.conversationLog.appendChild(messageEl);
+    this.currentBotMessage = messageEl;
+    
+    // Verify the placeholder was created
+    const placeholder = messageEl.querySelector('.timestamp-placeholder');
+    this.log(`Timestamp placeholder created: ${!!placeholder}`);
+  }
+
+  /**
+   * Set timestamp on current bot message when TTS actually starts
+   */
+  setBotMessageTimestamp() {
+    if (this.currentBotMessage) {
+      const timestampElement = this.currentBotMessage.querySelector('.timestamp-placeholder');
+      
+      if (timestampElement) {
+        const botStartTime = new Date().toLocaleTimeString();
+        this.log(`Bot started speaking at ${botStartTime} - setting timestamp`);
+        timestampElement.innerHTML = `<span class="timestamp-callout">${botStartTime}</span>`;
+        timestampElement.style.display = 'block';
+        timestampElement.classList.remove('timestamp-placeholder');
+      } else {
+        this.log(`Warning: No timestamp placeholder found in current bot message`);
+      }
+    } else {
+      this.log(`Warning: No current bot message to set timestamp on`);
+    }
   }
 
   /**
@@ -551,7 +736,15 @@ class ChatbotClient {
       if (messageContent) {
         const messageText = document.createElement('div');
         messageText.className = 'message-text';
-        messageText.textContent = text;
+        
+        // Add timestamp callout for user messages
+        if (lastMessage.classList.contains('user-message')) {
+          const userStoppedTime = new Date().toLocaleTimeString();
+          messageText.innerHTML = `${this.escapeHtml(text)}<span class="timestamp-callout">${userStoppedTime}</span>`;
+        } else {
+          messageText.textContent = text;
+        }
+        
         messageContent.appendChild(messageText);
 
         // Update current bot message reference if this is a bot message
@@ -566,8 +759,14 @@ class ChatbotClient {
    * Add code blocks to the current bot message
    */
   addCodeBlocksToCurrentBotMessage(codeBlocks) {
-    if (!this.currentBotMessage || !Array.isArray(codeBlocks) || codeBlocks.length === 0) {
+    if (!Array.isArray(codeBlocks) || codeBlocks.length === 0) {
       return;
+    }
+
+    // If no current bot message, create a new one for the extras
+    if (!this.currentBotMessage) {
+      this.createNewBotMessageForExtras(); // Empty message, just for the extras
+      this.lastMessageSource = 'bot';
     }
 
     const extrasContainer = this.currentBotMessage.querySelector('.message-extras');
@@ -614,15 +813,24 @@ class ChatbotClient {
     });
 
     extrasContainer.appendChild(codeSection);
-    this.scrollToBottom(this.conversationLog);
+    
+    this.log(`Added ${codeBlocks.length} code blocks to message`);
+    // Keep user at bottom if they were there before adding code blocks
+    this.maintainBottomPosition(this.conversationLog);
   }
 
   /**
    * Add links to the current bot message
    */
   addLinksToCurrentBotMessage(links) {
-    if (!this.currentBotMessage || !Array.isArray(links) || links.length === 0) {
+    if (!Array.isArray(links) || links.length === 0) {
       return;
+    }
+
+    // If no current bot message, create a new one for the extras
+    if (!this.currentBotMessage) {
+      this.createNewBotMessageForExtras(); // Empty message, just for the extras
+      this.lastMessageSource = 'bot';
     }
 
     const extrasContainer = this.currentBotMessage.querySelector('.message-extras');
@@ -673,21 +881,58 @@ class ChatbotClient {
     });
 
     extrasContainer.appendChild(linksSection);
-    this.scrollToBottom(this.conversationLog);
+    
+    this.log(`Added ${links.length} links to message`);
+    // Keep user at bottom if they were there before adding links
+    this.maintainBottomPosition(this.conversationLog);
   }
 
-  /**
+    /**
    * Scroll to bottom of container
    */
   scrollToBottom(container) {
     if (container) {
       container.scrollTop = container.scrollHeight;
-    }
+        }
   }
 
   /**
-   * Escape HTML to prevent XSS
+   * Check if user is currently at the bottom of the container
    */
+    isAtBottom(container) {
+      if (!container) return false;
+      
+      // Consider "at bottom" if within 5px (accounts for sub-pixel rendering)
+      const threshold = 5;
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const atBottom = distanceFromBottom <= threshold;
+      
+      this.log(`Bottom check: distanceFromBottom=${distanceFromBottom}px, threshold=${threshold}px, atBottom=${atBottom}`);
+      return atBottom;
+    }
+
+    /**
+     * If user was at bottom before content was added, keep them at bottom after
+     */
+    maintainBottomPosition(container) {
+      if (!container) return;
+      
+      // Check if user was at bottom before new content
+      const wasAtBottom = this.isAtBottom(container);
+      
+      if (wasAtBottom) {
+        this.log('User was at bottom - maintaining bottom position after content added');
+        requestAnimationFrame(() => {
+          this.scrollToBottom(container);
+        });
+      } else {
+        this.log('User was not at bottom - leaving scroll position unchanged');
+      }
+    }
+  
+    /**
+     * Escape HTML to prevent XSS
+     */
   escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
@@ -703,6 +948,15 @@ class ChatbotClient {
     }
     this.currentBotMessage = null;
     this.lastMessageSource = null;
+    // Clear any pending buffered content
+    this.pendingCodeBlocks = [];
+    this.pendingLinks = [];
+    // Reset speaking flag
+    this.botIsSpeaking = false;
+    // Reset focus state
+    if (this.conversationPanel) {
+      this.conversationPanel.classList.remove('focused');
+    }
   }
 }
 

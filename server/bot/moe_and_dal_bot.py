@@ -17,21 +17,15 @@ the conversation flow using Gemini's streaming capabilities.
 """
 
 import sys
-import json
 
 from loguru import logger
 import aiohttp
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import (
-    Frame,
-    TextFrame,
-)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -52,85 +46,6 @@ try:
 except ValueError:
     # Handle the case where logger is already initialized
     pass
-
-
-# class StructuredOutputParser(FrameProcessor):
-#     """Parses structured JSON output from LLM and extracts answer_for_tts for TTS.
-    
-#     Looks for JSON blocks in the format:
-#     ```json
-#     {
-#         "answer_for_tts": "Text for speech synthesis",
-#         "code_blocks": ["code snippet 1", "code snippet 2"],
-#         "links": ["url1", "url2"]
-#     }
-#     ```
-    
-#     Extracts and stores code_blocks and links, then sends only answer_for_tts to TTS.
-#     """
-    
-#     def __init__(self):
-#         super().__init__()
-#         self.extracted_data = {
-#             "code_blocks": [],
-#             "links": []
-#         }
-    
-#     async def process_frame(self, frame: Frame, direction: FrameDirection):
-#         """Process text frames and extract structured data."""
-        
-#         await super().process_frame(frame, direction)
-        
-#         if isinstance(frame, TextFrame):
-#             logger.info(f"Processing frame: {frame}")
-#             # Look for JSON blocks in the text
-#             text = frame.text
-#             logger.info(f"Text: {text}")
-#             # Check if this looks like a JSON response (with or without markdown markers)
-#             json_content = None
-#             if text.strip().startswith('```json') and text.strip().endswith('```'):
-#                 # Extract JSON content between the markers
-#                 json_content = text.strip()[7:-3].strip()  # Remove ```json and ```
-#             elif text.strip().startswith('{') and text.strip().endswith('}'):
-#                 # Raw JSON without markdown markers
-#                 json_content = text.strip()
-            
-#             if json_content:
-#                 try:
-#                     data = json.loads(json_content)
-                    
-#                     # Extract structured data for storage
-#                     if "code_blocks" in data:
-#                         self.extracted_data["code_blocks"].extend(data["code_blocks"])
-#                     if "links" in data:
-#                         self.extracted_data["links"].extend(data["links"])
-                    
-#                     logger.info(f"Extracted {len(data.get('code_blocks', []))} code blocks")
-#                     logger.info(f"Extracted {len(data.get('links', []))} links")
-                    
-#                     # Create new TextFrame with only the TTS-friendly content
-#                     if "answer_for_tts" in data:
-#                         tts_frame = TextFrame(data["answer_for_tts"])
-#                         await self.push_frame(tts_frame, direction)
-#                         return  # Don't push the original frame
-                    
-#                 except json.JSONDecodeError as e:
-#                     logger.error(f"Failed to parse JSON from LLM output: {e}")
-#                     # Fall through to push original frame
-#                 except Exception as e:
-#                     logger.error(f"Error processing structured output: {e}")
-#                     # Fall through to push original frame
-        
-#         # Push the original frame if no JSON processing occurred
-#         await self.push_frame(frame, direction)
-    
-#     def get_extracted_data(self):
-#         """Get the extracted code blocks and links."""
-#         return self.extracted_data.copy()
-    
-#     def clear_extracted_data(self):
-#         """Clear the stored extracted data."""
-#         self.extracted_data = {"code_blocks": [], "links": []}
 
 
 # REPLACE WITH YOUR MODAL URL ENDPOINT
@@ -245,7 +160,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 stt,
                 context_aggregator.user(),
                 llm,
-                # structured_parser,  # Parse structured JSON output and extract answer_for_tts
                 tts,
                 ta,
                 transport.output(),

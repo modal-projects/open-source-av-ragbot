@@ -1,8 +1,8 @@
 from pydub import AudioSegment
 
 # Path to your input and output files
-input_wav = "server/src/assets/erik_voice_sample_long.wav"
-output_wav = "server/src/assets/erik_voice_sample_24000.wav"
+input_wav = "server/services/tts/assets/kitt_voice_sample_converted.wav"
+output_wav = "server/services/tts/assets/kitt_voice_sample_converted_24000.wav"
 
 # Load the audio file
 audio = AudioSegment.from_wav(input_wav)

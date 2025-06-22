@@ -6,7 +6,7 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
-        "chatterbox-streaming@git+https://github.com/shababo/chatterbox-streaming.git@5656394f6aac7ec05d4ca07aa3639e275087c551",
+        "chatterbox-streaming@git+https://github.com/shababo/chatterbox-streaming.git@80b514ef7bb6c8fb38856e9f635a3b51dafd6be9",
         "fastapi[standard]",
         "torchaudio",
         "transformers",
@@ -29,7 +29,7 @@ class Chatterbox:
     @modal.enter()
     def load(self):
         self.model = ChatterboxTTS.from_pretrained(device="cuda")
-        self.audio_prompt_path = "/voice_samples/erik_voice_sample_24000.wav"
+        self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_24000.wav"
     
     def _create_wav_header(self, sample_rate: int, channels: int, bits_per_sample: int, estimated_data_size: int) -> bytes:
         """Create a WAV file header for streaming. Much more efficient than using torchaudio.save for each chunk."""
