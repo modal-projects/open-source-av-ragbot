@@ -218,8 +218,8 @@ class VLLMRAGServer:
         engine_kwargs = {
             "max_num_seqs": 3,  # Match concurrent max_inputs
             "enable_chunked_prefill": False,
-            "max_num_batched_tokens": 16384,  # Increased to avoid conflicts
-            "max_model_len": 8192,  # Reasonable context length for RAG (must be <= max_num_batched_tokens)
+            "max_num_batched_tokens": 32768,  # Increased to avoid conflicts
+            "max_model_len": 16384,  # Reasonable context length for RAG (must be <= max_num_batched_tokens)
         }
         
         engine_start = time.perf_counter()
@@ -451,8 +451,13 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             
             prompt_template = f"""You are a conversational AI that is an expert in the Modal library.
 Your form is the Modal logo, a pair of characters named Moe and Dal. Refer to yourself in the plural as 'we' and 'us' when appropriate.
-Because you are a conversational AI, you should not provide code or use symbols in your response.
-Additionally, answer the user's questions concisely and in English. Based on the provided context, conversation history, and current question, 
+Because you are a conversational AI, you will provide your response with three parts described below.
+It is very important that you don't use terms like @modal.function in the answer_for_tts part of the response.
+Instead you can say "the modal function decorator" or something like that.
+The proper code will be included in the code_blocks part of the response.
+Additionally, answer the user's questions concisely and in English. Do not use single word sentences like "Hello!" or "Okay". These do not work well with text-to-speech. 
+
+Based on the provided context, conversation history, and current question, 
 generate a structured response based on the schema below.
 
 Modal Documentation Context: {context_str}{history_context}
@@ -473,7 +478,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             streaming_generator = await self.generate_vllm_completion(
                 prompt_template,
                 max_tokens=1024,
-                temperature=0.1,
+                temperature=0.2,
                 stream=True
             )
             print(f"⏱️ [Streaming] vLLM generator setup took {time.perf_counter() - vllm_start:.3f}s")
@@ -522,7 +527,8 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                                 "complete": True
                             }
                             return
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            print(f"JSON parsing failed: {e}")
                             continue
             
             # Handle final result if not already processed
@@ -718,7 +724,15 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                                 "object": "chat.completion.chunk",
                                 "created": created_timestamp,
                                 "model": request.model,
-                                "choices": [{"index": 0, "delta": f"<struct>{json.dumps(modal_structured_data)}</struct>", "finish_reason": "stop"}],
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {
+                                            "content": f"<struct>{json.dumps(modal_structured_data)}</struct>"
+                                        },
+                                        "finish_reason": "stop"
+                                    }
+                                ],
                             }
                             yield f"data: {json.dumps(final_chunk)}\n\n"
                             yield "data: [DONE]\n\n"

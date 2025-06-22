@@ -3,5 +3,7 @@ name = "pipecat-modal"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "loguru>=0.7.3",
     "modal>=1.0.4",
+    "pydantic>=2.11.7",
 ]

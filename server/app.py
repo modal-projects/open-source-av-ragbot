@@ -20,7 +20,7 @@ bot_image = (
     .apt_install("ffmpeg")
     .pip_install(
         "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]", 
-        "loguru"
+        "loguru",
     )
     .add_local_dir("server", remote_path="/root/server")
 )
@@ -29,7 +29,8 @@ app = modal.App("moe-and-dal-ragbot")
 
 container_addresses = modal.Dict.from_name("ragbot_container_address", create_if_missing=True)
 
-@app.function(image=bot_image, min_containers=1, gpu="L40S")
+MINUTES = 60 # seconds in a minute
+@app.function(image=bot_image, gpu="L40S", timeout=30*MINUTES)
 async def bot_runner(d: modal.Dict):
     """Launch the provided bot process, providing the given room URL and token for the bot to join.
 
@@ -76,7 +77,7 @@ async def bot_runner(d: modal.Dict):
 
     
 
-@app.function(image=web_server_image, min_containers=1)
+@app.function(image=web_server_image)
 @modal.concurrent(max_inputs=1)
 @modal.asgi_app()
 def bot_server():
@@ -130,7 +131,7 @@ frontend_image = web_server_image.add_local_dir(
         Path(__file__).parent.parent / "client/dist",
         remote_path="/frontend",
     )
-@app.function(image=frontend_image, min_containers=1)
+@app.function(image=frontend_image)
 @modal.asgi_app()
 def frontend_server():
     """Create and configure the FastAPI application.

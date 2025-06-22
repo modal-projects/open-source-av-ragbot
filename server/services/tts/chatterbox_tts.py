@@ -1,5 +1,4 @@
 from pathlib import Path
-import io
 
 import modal
 
@@ -7,7 +6,7 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
-        "chatterbox-streaming", # @ git+https://github.com/shababo/chatterbox-streaming.git",
+        "chatterbox-streaming@git+https://github.com/shababo/chatterbox-streaming.git@5656394f6aac7ec05d4ca07aa3639e275087c551",
         "fastapi[standard]",
         "torchaudio",
         "transformers",

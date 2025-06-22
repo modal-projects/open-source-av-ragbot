@@ -12,3 +12,5 @@ venv
 
 *.png
 *.wav
+# node_modules
+node_modules

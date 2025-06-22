@@ -47,6 +47,12 @@ class ChatbotClient {
     this.deviceSelector = document.getElementById('device-selector');
     this.mediaContainer = document.querySelector('.media-container');
     this.userVideoContainer = document.getElementById('user-video-container');
+    this.conversationLog = document.getElementById('conversation-log');
+    
+    // Track current bot message for adding extras (code blocks, links)
+    this.currentBotMessage = null;
+    // Track the last message source for grouping
+    this.lastMessageSource = null;
 
     // Create an audio element for bot's voice output
     this.botAudio = document.createElement('audio');
@@ -170,10 +176,12 @@ class ChatbotClient {
         onUserTranscript: (data) => {
           // Only log final transcripts
           if (data.final) {
+            this.addUserMessage(data.text);
             this.log(`User: ${data.text}`);
           }
         },
         onBotTtsText: (data) => {
+          this.addBotMessage(data.text);
           this.log(`Bot: ${data.text}`);
         },
         // Error handling
@@ -186,6 +194,10 @@ class ChatbotClient {
         },
         onError: (error) => {
           console.log('Error:', JSON.stringify(error));
+        },
+        onServerMessage: (data) => {
+          console.log('Server message:', data);
+          this.handleServerMessage(data);
         },
       },
     };
@@ -334,6 +346,10 @@ class ChatbotClient {
   async connect() {
     try {
       this.connectBtn.disabled = true;
+      
+      // Clear any previous content
+      this.clearDisplayedContent();
+      
       // await this.initializeClientAndTransport();
       console.log(this.rtviClient.params.requestData);
 
@@ -390,6 +406,9 @@ class ChatbotClient {
           video.srcObject = null;
         }
         this.botVideoContainer.innerHTML = '';
+
+        // Clear displayed conversation
+        this.clearDisplayedContent();
       } catch (error) {
         this.log(`Error disconnecting: ${error.message}`);
       }
@@ -417,6 +436,273 @@ class ChatbotClient {
       this.log('Could not access webcam: ' + err.message);
       this.userVideoContainer.innerHTML = '<div style="color: #f44336; text-align: center;">Webcam unavailable</div>';
     }
+  }
+
+  /**
+   * Handle server messages for code blocks and links
+   */
+  handleServerMessage(data) {
+    if (data.type === 'code_blocks' && data.payload) {
+      this.addCodeBlocksToCurrentBotMessage(data.payload);
+    } else if (data.type === 'links' && data.payload) {
+      this.addLinksToCurrentBotMessage(data.payload);
+    }
+  }
+
+  /**
+   * Add a user message to the conversation
+   */
+  addUserMessage(text) {
+    if (!this.conversationLog || !text.trim()) return;
+
+    // Remove empty state if it exists
+    const emptyState = this.conversationLog.querySelector('.empty-state');
+    if (emptyState) {
+      emptyState.remove();
+    }
+
+    // Check if we should group with the last message
+    if (this.lastMessageSource === 'user') {
+      // Append to existing user message container
+      this.appendToLastMessage(text);
+    } else {
+      // Create new user message container
+      this.createNewUserMessage(text);
+      this.lastMessageSource = 'user';
+    }
+
+    this.scrollToBottom(this.conversationLog);
+  }
+
+  /**
+   * Add a bot message to the conversation
+   */
+  addBotMessage(text) {
+    if (!this.conversationLog || !text.trim()) return;
+
+    // Remove empty state if it exists
+    const emptyState = this.conversationLog.querySelector('.empty-state');
+    if (emptyState) {
+      emptyState.remove();
+    }
+
+    // Check if we should group with the last message
+    if (this.lastMessageSource === 'bot') {
+      // Append to existing bot message container
+      this.appendToLastMessage(text);
+    } else {
+      // Create new bot message container
+      this.createNewBotMessage(text);
+      this.lastMessageSource = 'bot';
+    }
+
+    this.scrollToBottom(this.conversationLog);
+  }
+
+  /**
+   * Create a new user message container
+   */
+  createNewUserMessage(text) {
+    const messageEl = document.createElement('div');
+    messageEl.className = 'message-container user-message';
+    messageEl.innerHTML = `
+      <div class="message-header">
+        <span class="message-avatar">👤</span>
+        <span>You</span>
+        <span style="margin-left: auto; font-size: 10px;">${new Date().toLocaleTimeString()}</span>
+      </div>
+      <div class="message-content">
+        <div class="message-text">${this.escapeHtml(text)}</div>
+      </div>
+    `;
+
+    this.conversationLog.appendChild(messageEl);
+  }
+
+  /**
+   * Create a new bot message container
+   */
+  createNewBotMessage(text) {
+    const messageEl = document.createElement('div');
+    messageEl.className = 'message-container bot-message';
+    messageEl.innerHTML = `
+      <div class="message-header">
+        <span class="message-avatar">🤖</span>
+        <span>Modal Assistant</span>
+        <span style="margin-left: auto; font-size: 10px;">${new Date().toLocaleTimeString()}</span>
+      </div>
+      <div class="message-content">
+        <div class="message-text">${this.escapeHtml(text)}</div>
+      </div>
+      <div class="message-extras"></div>
+    `;
+
+    this.conversationLog.appendChild(messageEl);
+    this.currentBotMessage = messageEl;
+  }
+
+  /**
+   * Append text to the last message container
+   */
+  appendToLastMessage(text) {
+    const lastMessage = this.conversationLog.lastElementChild;
+    if (lastMessage && lastMessage.classList.contains('message-container')) {
+      const messageContent = lastMessage.querySelector('.message-content');
+      if (messageContent) {
+        const messageText = document.createElement('div');
+        messageText.className = 'message-text';
+        messageText.textContent = text;
+        messageContent.appendChild(messageText);
+
+        // Update current bot message reference if this is a bot message
+        if (lastMessage.classList.contains('bot-message')) {
+          this.currentBotMessage = lastMessage;
+        }
+      }
+    }
+  }
+
+  /**
+   * Add code blocks to the current bot message
+   */
+  addCodeBlocksToCurrentBotMessage(codeBlocks) {
+    if (!this.currentBotMessage || !Array.isArray(codeBlocks) || codeBlocks.length === 0) {
+      return;
+    }
+
+    const extrasContainer = this.currentBotMessage.querySelector('.message-extras');
+    if (!extrasContainer) return;
+
+    // Create code blocks section
+    const codeSection = document.createElement('div');
+    codeSection.className = 'extras-section';
+    codeSection.innerHTML = `
+      <div class="extras-header">📋 Code Examples</div>
+      <div class="code-blocks-container"></div>
+    `;
+
+    const codeContainer = codeSection.querySelector('.code-blocks-container');
+
+    codeBlocks.forEach((code, index) => {
+      const codeBlockEl = document.createElement('div');
+      codeBlockEl.className = 'code-block';
+      codeBlockEl.innerHTML = `
+        <div class="code-block-header">
+          <span>Example ${index + 1}</span>
+          <button class="copy-btn" onclick="this.parentElement.parentElement.copyCode()">📋 Copy</button>
+        </div>
+        <pre><code>${this.escapeHtml(code)}</code></pre>
+      `;
+
+      // Add copy functionality
+      codeBlockEl.copyCode = () => {
+        navigator.clipboard.writeText(code).then(() => {
+          const copyBtn = codeBlockEl.querySelector('.copy-btn');
+          const originalText = copyBtn.textContent;
+          copyBtn.textContent = '✅ Copied!';
+          copyBtn.style.color = '#28a745';
+          setTimeout(() => {
+            copyBtn.textContent = originalText;
+            copyBtn.style.color = '';
+          }, 2000);
+        }).catch(err => {
+          console.error('Failed to copy code:', err);
+        });
+      };
+
+      codeContainer.appendChild(codeBlockEl);
+    });
+
+    extrasContainer.appendChild(codeSection);
+    this.scrollToBottom(this.conversationLog);
+  }
+
+  /**
+   * Add links to the current bot message
+   */
+  addLinksToCurrentBotMessage(links) {
+    if (!this.currentBotMessage || !Array.isArray(links) || links.length === 0) {
+      return;
+    }
+
+    const extrasContainer = this.currentBotMessage.querySelector('.message-extras');
+    if (!extrasContainer) return;
+
+    // Create links section
+    const linksSection = document.createElement('div');
+    linksSection.className = 'extras-section';
+    linksSection.innerHTML = `
+      <div class="extras-header">🔗 Helpful Links</div>
+      <div class="links-container"></div>
+    `;
+
+    const linksContainer = linksSection.querySelector('.links-container');
+
+    links.forEach((link) => {
+      const linkEl = document.createElement('div');
+      linkEl.className = 'link-item';
+      
+      // Extract domain for display
+      let displayText = link;
+      let icon = '🔗';
+      
+      try {
+        const url = new URL(link);
+        displayText = url.hostname + url.pathname;
+        
+        // Use different icons based on domain
+        if (url.hostname.includes('modal.com')) {
+          icon = '📖';
+        } else if (url.hostname.includes('github.com')) {
+          icon = '⚡';
+        } else if (url.hostname.includes('docs.')) {
+          icon = '📋';
+        }
+      } catch {
+        // If URL parsing fails, use the original link as display text
+      }
+
+      linkEl.innerHTML = `
+        <a href="${link}" target="_blank" rel="noopener noreferrer">
+          <span class="link-icon">${icon}</span>
+          <span class="link-text">${this.escapeHtml(displayText)}</span>
+        </a>
+      `;
+
+      linksContainer.appendChild(linkEl);
+    });
+
+    extrasContainer.appendChild(linksSection);
+    this.scrollToBottom(this.conversationLog);
+  }
+
+  /**
+   * Scroll to bottom of container
+   */
+  scrollToBottom(container) {
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+
+  /**
+   * Escape HTML to prevent XSS
+   */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
+   * Clear conversation log
+   */
+  clearDisplayedContent() {
+    if (this.conversationLog) {
+      this.conversationLog.innerHTML = '<div class="empty-state">Your conversation will appear here</div>';
+    }
+    this.currentBotMessage = null;
+    this.lastMessageSource = null;
   }
 }
 
