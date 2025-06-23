@@ -1,11 +1,8 @@
-# Built from Pipecat's Modal deployment example
+# Built from Pipecat's Modal Deployment example here:
 # https://github.com/pipecat-ai/pipecat/tree/main/examples/deployment/modal-example
-
 
 import asyncio
 import modal
-
-
 
 # container specifications for the FastAPI web server
 web_server_image = (

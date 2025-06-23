@@ -29,7 +29,7 @@ class Chatterbox:
     @modal.enter()
     def load(self):
         self.model = ChatterboxTTS.from_pretrained(device="cuda")
-        self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_24000.wav"
+        self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_short_24000.wav"
     
     def _create_wav_header(self, sample_rate: int, channels: int, bits_per_sample: int, estimated_data_size: int) -> bytes:
         """Create a WAV file header for streaming. Much more efficient than using torchaudio.save for each chunk."""
