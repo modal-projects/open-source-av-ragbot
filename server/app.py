@@ -2,40 +2,36 @@
 # https://github.com/pipecat-ai/pipecat/tree/main/examples/deployment/modal-example
 
 import asyncio
+from pathlib import Path
+
 import modal
 
-# container specifications for the FastAPI web server
-web_server_image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi==0.115.12")
-    .add_local_dir("server", remote_path="/root/server")
-)
+app = modal.App("moe-and-dal-ragbot")
 
 # container specifications for the Pipecat pipeline
 bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
     .apt_install("ffmpeg")
     .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]", 
-        "loguru",
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]==0.0.71", 
     )
     .add_local_dir("server", remote_path="/root/server")
 )
 
-app = modal.App("moe-and-dal-ragbot")
-
-container_addresses = modal.Dict.from_name("ragbot_container_address", create_if_missing=True)
-
 MINUTES = 60 # seconds in a minute
-@app.function(image=bot_image, gpu="L40S", timeout=30*MINUTES)
-async def bot_runner(d: modal.Dict):
-    """Launch the provided bot process, providing the given room URL and token for the bot to join.
+@app.function(
+    image=bot_image, 
+    gpu="L40S", 
+    timeout=30*MINUTES
+)
+async def run_bot(d: modal.Dict):
+    """Launch the bot process with WebRTC connection and run the bot pipeline.
 
     Args:
-        bot_name (BotName): The name of the bot implementation to use. Defaults to "openai".
+        d (modal.Dict): A dictionary containing the WebRTC offer and ICE servers configuration.
 
     Raises:
-        HTTPException: If the bot pipeline fails to start.
+        RuntimeError: If the bot pipeline fails to start or encounters an error.
     """
     from loguru import logger
     from pipecat.transports.network.webrtc_connection import SmallWebRTCConnection, IceServer
@@ -53,26 +49,30 @@ async def bot_runner(d: modal.Dict):
             for ice_server in ice_servers
         ]
 
-        pipecat_connection = SmallWebRTCConnection(ice_servers)
-        await pipecat_connection.initialize(sdp=offer["sdp"], type=offer["type"])
+        webrtc_connection = SmallWebRTCConnection(ice_servers)
+        await webrtc_connection.initialize(sdp=offer["sdp"], type=offer["type"])
 
-        @pipecat_connection.event_handler("closed")
+        @webrtc_connection.event_handler("closed")
         async def handle_disconnected(webrtc_connection: SmallWebRTCConnection):
-            logger.info(f"Discarding peer connection")
-            pipecat_connection = None            
+            logger.info("WebRTC connection to bot closed.")
 
-        print(f"Starting bot process...")
+        print("Starting bot process.")
         
-        answer = pipecat_connection.get_answer()
+        answer = webrtc_connection.get_answer()
         await d.put.aio("answer", answer)
 
-        bot_task = asyncio.create_task(run_bot(pipecat_connection))
+        bot_task = asyncio.create_task(run_bot(webrtc_connection))
         await bot_task
 
     except Exception as e:
         raise RuntimeError(f"Failed to start bot pipeline: {e}")
 
-    
+
+web_server_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("fastapi==0.115.12")
+    .add_local_dir("server", remote_path="/root/server")
+)
 
 @app.function(image=web_server_image)
 @modal.concurrent(max_inputs=1)
@@ -101,7 +101,7 @@ def bot_server():
     @web_app.post("/offer")
     async def offer(offer: dict):
 
-        ice_servers = [
+        _ICE_SERVERS = [
             {
                 "urls": "stun:stun.l.google.com:19302",
             }
@@ -109,10 +109,10 @@ def bot_server():
 
         with modal.Dict.ephemeral() as d:
 
-            await d.put.aio("ice_servers", ice_servers)
+            await d.put.aio("ice_servers", _ICE_SERVERS)
             await d.put.aio("offer", offer)
 
-            bot_runner.spawn(d)
+            run_bot.spawn(d)
 
             while True: 
                 answer = await d.get.aio("answer")
@@ -122,12 +122,11 @@ def bot_server():
 
     return web_app
 
-from pathlib import Path
-
 frontend_image = web_server_image.add_local_dir(  
-        Path(__file__).parent.parent / "client/dist",
-        remote_path="/frontend",
-    )
+    Path(__file__).parent.parent / "client/dist",
+    remote_path="/frontend",
+)
+
 @app.function(image=frontend_image)
 @modal.asgi_app()
 def frontend_server():
