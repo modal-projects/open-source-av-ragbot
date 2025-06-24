@@ -7,7 +7,7 @@ from pipecat.utils.tracing.service_decorators import traced_llm
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.metrics.metrics import LLMTokenUsage
 
-from server.services.rag.parser import ModalRagStreamingJsonParser
+from server.services.modal_rag.parser import ModalRagStreamingJsonParser
 
 class ModalRagLLMService(OpenAILLMService):
     def __init__(self, *args, **kwargs):
