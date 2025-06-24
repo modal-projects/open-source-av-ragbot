@@ -64,7 +64,6 @@ class ChromaVectorIndex:
         """Setup the complete RAG system."""
         print("Setting up RAG system...")
         self.setup()
-        self.download_models()
         self.create_vector_index()
         print("RAG system setup complete!")
 
@@ -106,6 +105,9 @@ class ChromaVectorIndex:
             self.is_setup = True
 
     def create_vector_index(self):
+        return self.get_vector_index.local()
+    
+    def _create_vector_index(self):
         """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
         
         from llama_index.core import Document, StorageContext, VectorStoreIndex
@@ -156,7 +158,7 @@ class ChromaVectorIndex:
         
         except Exception as e:
             print(f"Error getting vector index: {type(e)}: {e}")
-            return self.create_vector_index()
+            return self._create_vector_index()
 
 _MAX_CONCURRENT_INPUTS = 3
 @app.cls(
@@ -235,23 +237,7 @@ class VLLMRAGServer:
         print("Setting up vector index and retriever...")
         
         try:
-            # import chromadb
-            # from llama_index.core import VectorStoreIndex
-            # from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-            # from llama_index.vector_stores.chroma import ChromaVectorStore
-            
-            # # Setup ChromaDB
-            # chroma_client = chromadb.PersistentClient("/chroma")
-            # chroma_collection = chroma_client.get_or_create_collection("modal_rag")
-            # vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-            
-            # # Load embedding model
-            # embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
-            
-            # # Create vector index
-            # vector_index = VectorStoreIndex.from_vector_store(
-            #     vector_store, embed_model=embedding
-            # )
+
             vector_index = ChromaVectorIndex().get_vector_index.local()
             self.retriever = vector_index.as_retriever(similarity_top_k=10)
             
@@ -270,7 +256,7 @@ class VLLMRAGServer:
             self.retriever = None
         
         # Setup FastAPI app
-        self.setup_fastapi()
+        self._setup_fastapi()
 
         # Warm up vLLM engine
         print("Warming up vLLM engine...")
@@ -343,130 +329,7 @@ class VLLMRAGServer:
             print(f"⏱️ [vLLM] Non-streaming generation completed in {gen_time:.3f}s, output: {len(result)} chars")
             return result
     
-    async def generate_structured_response(self, question: str, conversation_history: str = ""):
-        """Generate a structured response using vLLM with RAG context."""
-
-        from pydantic import BaseModel
-        
-        class ModalLLMOutput(BaseModel):
-            answer_for_tts: str
-            code_blocks: list = []
-            links: list = []
-
-        total_start = time.perf_counter()
-        
-        try:
-            # Get relevant context from RAG
-            rag_start = time.perf_counter()
-            if self.retriever is None:
-                print("⚠️ Retriever not available, using fallback")
-                context_str = "No context available - retriever setup failed."
-            else:
-                try:
-                    retrieved_nodes = self.retriever.retrieve(question)
-                    # Filter out nodes with None text and handle gracefully
-                    valid_texts = []
-                    for node in retrieved_nodes:
-                        if node.text is not None:
-                            valid_texts.append(node.text)
-                        else:
-                            print(f"⚠️ Found node with None text, skipping")
-                    
-                    context_str = "\n\n".join(valid_texts) if valid_texts else "No valid context found."
-                except Exception as e:
-                    print(f"⚠️ RAG retrieval failed: {e}")
-                    context_str = "Context retrieval failed - using fallback."
-            
-            rag_time = time.perf_counter() - rag_start
-            print(f"⏱️ RAG retrieval took {rag_time:.3f}s for query: {question[:50]}...")
-            
-            # Create structured output prompt with conversation history
-            history_context = ""
-            if conversation_history:
-                history_context = f"\n\nConversation History:\n{conversation_history}\n"
-            
-            prompt_template = f"""You are a conversational AI that is an expert in the Modal library.
-Your form is the Modal logo, a pair of characters named Moe and Dal. Refer to yourself in the plural as 'we' and 'us' when appropriate.
-Because you are a conversational AI, you should not provide code or use symbols in your response.
-Additionally, answer the user's questions concisely and in English. Based on the provided context, conversation history, and current question, 
-generate a structured response based on the schema below.
-
-Modal Documentation Context: {context_str}{history_context}
-Current Question: {question}
-
-You MUST respond with ONLY the following JSON format (no additional text):
-
-{{
-    "answer_for_tts": "A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Explain concepts simply and avoid bullet points.",
-    "code_blocks": ["List of actual code snippets that would be useful to display separately"],
-    "links": ["List of relevant URLs or documentation references"]
-}}
-
-IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text."""
-
-            # Use vLLM to generate structured response
-            vllm_start = time.perf_counter()
-            raw_response = await self.generate_vllm_completion(
-                prompt_template,
-                max_tokens=_DEFAULT_MAX_TOKENS,
-                temperature=0.1
-            )
-            vllm_time = time.perf_counter() - vllm_start
-            print(f"⏱️ vLLM generation took {vllm_time:.3f}s")
-            
-            # Parse JSON response
-            parse_start = time.perf_counter()
-            import re
-            import json
-            
-            json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                
-                # Try to fix common JSON issues
-                if not json_str.endswith('}'):
-                    open_braces = json_str.count('{')
-                    close_braces = json_str.count('}')
-                    missing_braces = open_braces - close_braces
-                    json_str += '}' * missing_braces
-                
-                try:
-                    parsed_json = json.loads(json_str)
-                    result = ModalLLMOutput(
-                        answer_for_tts=parsed_json.get("answer_for_tts", ""),
-                        code_blocks=parsed_json.get("code_blocks", []),
-                        links=parsed_json.get("links", [])
-                    )
-                    parse_time = time.perf_counter() - parse_start
-                    total_time = time.perf_counter() - total_start
-                    print(f"⏱️ JSON parsing took {parse_time:.3f}s, total response time: {total_time:.3f}s")
-                    return result
-                except json.JSONDecodeError as e:
-                    print(f"JSON parsing failed: {e}")
-            
-            # Fallback: treat raw response as TTS content
-            parse_time = time.perf_counter() - parse_start
-            total_time = time.perf_counter() - total_start
-            print(f"⏱️ JSON fallback parsing took {parse_time:.3f}s, total response time: {total_time:.3f}s")
-            return ModalLLMOutput(
-                answer_for_tts=raw_response,
-                code_blocks=[],
-                links=[]
-            )
-            
-        except Exception as e:
-            total_time = time.perf_counter() - total_start
-            print(f"Structured response failed: {e}, total time: {total_time:.3f}s")
-            # Fallback to basic completion
-            basic_prompt = f"{get_system_prompt()}\n\nUser: {question}\nAssistant:"
-            fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=_DEFAULT_MAX_TOKENS)
-            return ModalLLMOutput(
-                answer_for_tts=fallback_response,
-                code_blocks=[],
-                links=[]
-            )
-    
-    async def generate_streaming_structured_response(self, question: str, conversation_history: str = ""):
+    async def _generate_streaming_response(self, question: str, conversation_history: str = ""):
         """Generate streaming response with vLLM - simplified to just stream raw output."""
         
         total_start = time.perf_counter()
@@ -502,12 +365,6 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 history_context = f"\n\nConversation History:\n{conversation_history}\n"
             
             prompt_template = f"""
-You are a conversational AI that is an expert in the Modal library.
-Your form is the Modal logo, a pair of characters named Moe and Dal. Refer to yourself in the plural as 'we' and 'us' when appropriate.
-Your job is to provide useful information about Modal and developing with Modal.
-Your answer will consist of three parts: an answer that will be played as poken audio (answer_for_tts), snippets of useful code related to the user's query (code blocks),
-and relevant links pulled directly from the documentation context (links).
-
 Modal Documentation Context: 
 
 {context_str}
@@ -523,7 +380,7 @@ Current Question:
 You MUST respond with ONLY the following JSON format (no additional text):
 
 {{
-    "answer_for_tts": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
+    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
     "code_blocks": list[str], List of actual code snippets that would be useful to display separately
     "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context.
 }}
@@ -569,7 +426,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             print(f"vLLM streaming error: {e}, total time: {total_time:.3f}s")
             yield {"type": "error", "content": str(e), "total_time": total_time}
     
-    def setup_fastapi(self):
+    def _setup_fastapi(self):
         from typing import List, Optional
         from fastapi import FastAPI, HTTPException
         from pydantic import BaseModel
@@ -622,12 +479,14 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                         for msg in conversation_history[:-1]  # Exclude the current message
                     ])
 
-                streaming_generator = self._get_streaming_generator(
-                    current_user_message,
-                    formatted_history,
-                )
+                print(f"Formatted history: {formatted_history}")
                 
                 if getattr(request, "stream", False):
+
+                    streaming_generator = self._get_streaming_generator(
+                        current_user_message,
+                        formatted_history,
+                    )
                     
                     return StreamingResponse(
                         streaming_generator,
@@ -643,7 +502,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                     created_timestamp = int(time.time())
                     collected_content = ""
                     
-                    async for result in self.generate_streaming_structured_response(current_user_message, formatted_history):
+                    async for result in self._generate_streaming_response(current_user_message, formatted_history):
                         if result["type"] == "raw_text":
                             collected_content = result["content"]
                         elif result["type"] == "complete":
@@ -678,9 +537,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 raise HTTPException(status_code=500, detail=str(e))
     
     def _get_streaming_generator(self, user_message: str, formatted_history: str):
-        
-        import asyncio
-        
+                
         print(f"Streaming response for {user_message}")
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
         
@@ -704,7 +561,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 # Process streaming results in real-time
                 current_text = ""
                 
-                async for result in self.generate_streaming_structured_response(user_message, formatted_history):
+                async for result in self._generate_streaming_response(user_message, formatted_history):
                     if result["type"] == "raw_text":
                         # Stream the raw text as it comes in
                         new_content = result["content"]
@@ -772,18 +629,6 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 yield "data: [DONE]\n\n"
         
         return streaming_response()
-        
-    @modal.method()
-    async def query_rag(self, question: str) -> str:
-        """Direct method to query the RAG system with vLLM."""
-        basic_prompt = f"{get_system_prompt()}\n\nUser: {question}\nAssistant:"
-        return await self.generate_vllm_completion(basic_prompt, max_tokens=_DEFAULT_MAX_TOKENS)
-    
-    @modal.method()
-    async def query_rag_structured(self, question: str, conversation_history: str = "") -> dict:
-        """Direct method to query the RAG system with structured output."""
-        structured_result = await self.generate_structured_response(question, conversation_history)
-        return structured_result.dict()
     
     @modal.asgi_app()
     def fastapi_app(self):
@@ -791,11 +636,21 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
     
 def get_system_prompt():
     system_prompt = """
-    You are a conversational AI that is an expert in the Modal library. 
-    Your form is the Modal logo, a pair of characters named Moe and Dal. 
-    Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'. 
-    Because you are a conversational AI, you should not provide code or use symbols in your response. 
-    Additionally, answer the user's questions concisely and in English.
+You are a conversational AI that is an expert in the Modal library.
+Your form is the Modal logo, a pair of characters named Moe and Dal. Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'.
+Your job is to provide useful information about Modal and developing with Modal to the user.
+Your answer will consist of three parts: an answer that will be played to audio as speech (spoke_response), snippets of useful code related to the user's query (code blocks),
+and relevant links pulled directly from the documentation context (links).
+
+You MUST respond with ONLY the following JSON format (no additional text):
+
+{{
+    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
+    "code_blocks": list[str], List of actual code snippets that would be useful to display separately
+    "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context.
+}}
+
+IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text.
     """
     return system_prompt
 
