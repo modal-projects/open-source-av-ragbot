@@ -17,28 +17,7 @@ EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 LLM_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
 MODELS_DIR = Path("/models")
 
-# Download models image definition
-download_image = (
-    modal.Image.debian_slim()
-    .pip_install(
-        "huggingface_hub[hf_xet]",
-        "hf-transfer"
-    )
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
-)
-
-@app.function(
-    volumes={"/models": models_volume},
-    image=download_image,
-    cpu=4,
-    memory=8192,
-)
-def download_models():
-    from huggingface_hub import snapshot_download
-
-    for repo_id in [EMBEDDING_MODEL, LLM_MODEL]:
-        snapshot_download(repo_id=repo_id, local_dir=MODELS_DIR / repo_id)
-        print(f"Model downloaded to {MODELS_DIR / repo_id}")
+_DEFAULT_MAX_TOKENS = 2048
 
 # Main image with vLLM dependencies
 vllm_rag_image = (
@@ -77,9 +56,32 @@ vllm_rag_image = (
     image=vllm_rag_image,
 )
 class ChromaVectorIndex:
+    is_setup: bool = False
+
+    # Setup function
+    @modal.method()
+    def setup_rag_system(self):
+        """Setup the complete RAG system."""
+        print("Setting up RAG system...")
+        self.setup()
+        self.download_models()
+        self.create_vector_index()
+        print("RAG system setup complete!")
+
+
+    def download_models(self):
+        from huggingface_hub import snapshot_download
+
+        for repo_id in [EMBEDDING_MODEL, LLM_MODEL]:
+            snapshot_download(repo_id=repo_id, local_dir=MODELS_DIR / repo_id)
+            print(f"Model downloaded to {MODELS_DIR / repo_id}")
+
+    def setup(self):
+        if not self.is_setup:
+            self._setup()
 
     @modal.enter()
-    def setup(self):
+    def _setup(self):
         """Setup the ChromaDB vector index."""
         import chromadb
         import torch
@@ -87,16 +89,22 @@ class ChromaVectorIndex:
         from llama_index.vector_stores.chroma import ChromaVectorStore
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-        torch.set_float32_matmul_precision("high")
-        # Setup ChromaDB
-        self.chroma_client = chromadb.PersistentClient("/chroma")
-        self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
-        self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+        if not self.is_setup:
 
-        # Load embedding model
-        self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+            # check of models are already downloaded
+            if not (MODELS_DIR / EMBEDDING_MODEL).exists() or not (MODELS_DIR / LLM_MODEL).exists():
+                self.download_models()
 
-    @modal.method()
+            torch.set_float32_matmul_precision("high")
+            # Setup ChromaDB
+            self.chroma_client = chromadb.PersistentClient("/chroma")
+            self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
+            self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+
+            # Load embedding model
+            self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+            self.is_setup = True
+
     def create_vector_index(self):
         """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
         
@@ -116,6 +124,9 @@ class ChromaVectorIndex:
             vector_index = VectorStoreIndex.from_documents(
                 [document], storage_context=storage_context, embed_model=self.embedding
             )
+            # test retrieval
+            test_nodes = vector_index.as_retriever(similarity_top_k=10).retrieve("What GPUs can I use with Modal?")
+            print(test_nodes)
 
             total_time = time.perf_counter() - create_start
             print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
@@ -157,7 +168,6 @@ _MAX_CONCURRENT_INPUTS = 3
     memory=32768,
     gpu="H100",
     image=vllm_rag_image,
-    min_containers=1,
     timeout=10 * 60,
 )
 @modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
@@ -221,8 +231,43 @@ class VLLMRAGServer:
         engine_time = time.perf_counter() - engine_start
         print(f"⏱️ vLLM engine setup in {engine_time:.2f}s")
         
-        vector_index = ChromaVectorIndex.get_vector_index.remote()
-        self.retriever = vector_index.as_retriever(similarity_top_k=5)
+        # Setup vector index and retriever locally within this container
+        print("Setting up vector index and retriever...")
+        
+        try:
+            # import chromadb
+            # from llama_index.core import VectorStoreIndex
+            # from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+            # from llama_index.vector_stores.chroma import ChromaVectorStore
+            
+            # # Setup ChromaDB
+            # chroma_client = chromadb.PersistentClient("/chroma")
+            # chroma_collection = chroma_client.get_or_create_collection("modal_rag")
+            # vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+            
+            # # Load embedding model
+            # embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+            
+            # # Create vector index
+            # vector_index = VectorStoreIndex.from_vector_store(
+            #     vector_store, embed_model=embedding
+            # )
+            vector_index = ChromaVectorIndex().get_vector_index.local()
+            self.retriever = vector_index.as_retriever(similarity_top_k=10)
+            
+            # Test retrieval with a simple query to validate setup
+            try:
+                test_nodes = self.retriever.retrieve("Modal")
+                print(f"✅ Vector index and retriever setup complete - found {len(test_nodes)} test nodes")
+                if test_nodes:
+                    first_node_preview = test_nodes[0].text[:100] if test_nodes[0].text else "None"
+                    print(f"   First node preview: {first_node_preview}...")
+            except Exception as e:
+                print(f"⚠️ Test retrieval failed: {e}")
+                self.retriever = None
+        except Exception as e:
+            print(f"⚠️ Vector index setup failed: {e}")
+            self.retriever = None
         
         # Setup FastAPI app
         self.setup_fastapi()
@@ -244,7 +289,7 @@ class VLLMRAGServer:
         except Exception as e:
             print(f"⚠️ vLLM warmup failed: {e}")
 
-    async def generate_vllm_completion(self, prompt: str, max_tokens: int = 512, temperature: float = 0.1, stream: bool = False):
+    async def generate_vllm_completion(self, prompt: str, max_tokens: int = _DEFAULT_MAX_TOKENS, temperature: float = 0.1, stream: bool = False):
         """Generate completion using vLLM AsyncLLMEngine."""
         from dataclasses import asdict
         from vllm import SamplingParams
@@ -301,15 +346,37 @@ class VLLMRAGServer:
     async def generate_structured_response(self, question: str, conversation_history: str = ""):
         """Generate a structured response using vLLM with RAG context."""
 
-        from server.services.rag.models import ModalLLMOutput
+        from pydantic import BaseModel
+        
+        class ModalLLMOutput(BaseModel):
+            answer_for_tts: str
+            code_blocks: list = []
+            links: list = []
 
         total_start = time.perf_counter()
         
         try:
             # Get relevant context from RAG
             rag_start = time.perf_counter()
-            retrieved_nodes = self.retriever.retrieve(question)
-            context_str = "\n\n".join([node.text for node in retrieved_nodes])
+            if self.retriever is None:
+                print("⚠️ Retriever not available, using fallback")
+                context_str = "No context available - retriever setup failed."
+            else:
+                try:
+                    retrieved_nodes = self.retriever.retrieve(question)
+                    # Filter out nodes with None text and handle gracefully
+                    valid_texts = []
+                    for node in retrieved_nodes:
+                        if node.text is not None:
+                            valid_texts.append(node.text)
+                        else:
+                            print(f"⚠️ Found node with None text, skipping")
+                    
+                    context_str = "\n\n".join(valid_texts) if valid_texts else "No valid context found."
+                except Exception as e:
+                    print(f"⚠️ RAG retrieval failed: {e}")
+                    context_str = "Context retrieval failed - using fallback."
+            
             rag_time = time.perf_counter() - rag_start
             print(f"⏱️ RAG retrieval took {rag_time:.3f}s for query: {question[:50]}...")
             
@@ -341,7 +408,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             vllm_start = time.perf_counter()
             raw_response = await self.generate_vllm_completion(
                 prompt_template,
-                max_tokens=1024,
+                max_tokens=_DEFAULT_MAX_TOKENS,
                 temperature=0.1
             )
             vllm_time = time.perf_counter() - vllm_start
@@ -391,8 +458,8 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             total_time = time.perf_counter() - total_start
             print(f"Structured response failed: {e}, total time: {total_time:.3f}s")
             # Fallback to basic completion
-            basic_prompt = f"{self.prompt} {question}"
-            fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=512)
+            basic_prompt = f"{get_system_prompt()}\n\nUser: {question}\nAssistant:"
+            fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=_DEFAULT_MAX_TOKENS)
             return ModalLLMOutput(
                 answer_for_tts=fallback_response,
                 code_blocks=[],
@@ -400,17 +467,32 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             )
     
     async def generate_streaming_structured_response(self, question: str, conversation_history: str = ""):
-        """Generate structured response with vLLM streaming for immediate TTS."""
-        import re
-        import json
+        """Generate streaming response with vLLM - simplified to just stream raw output."""
         
         total_start = time.perf_counter()
         
         try:
             # Get RAG context
             rag_start = time.perf_counter()
-            retrieved_nodes = self.retriever.retrieve(question)
-            context_str = "\n\n".join([node.text for node in retrieved_nodes])
+            if self.retriever is None:
+                print("⚠️ [Streaming] Retriever not available, using fallback")
+                context_str = "No context available - retriever setup failed."
+            else:
+                try:
+                    retrieved_nodes = self.retriever.retrieve(question)
+                    # Filter out nodes with None text and handle gracefully
+                    valid_texts = []
+                    for node in retrieved_nodes:
+                        if node.text is not None:
+                            valid_texts.append(node.text)
+                        else:
+                            print(f"⚠️ [Streaming] Found node with None text, skipping")
+                    
+                    context_str = "\n\n".join(valid_texts) if valid_texts else "No valid context found."
+                except Exception as e:
+                    print(f"⚠️ [Streaming] RAG retrieval failed: {e}")
+                    context_str = "Context retrieval failed - using fallback."
+            
             rag_time = time.perf_counter() - rag_start
             print(f"⏱️ [Streaming] RAG retrieval took {rag_time:.3f}s")
             
@@ -419,26 +501,31 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             if conversation_history:
                 history_context = f"\n\nConversation History:\n{conversation_history}\n"
             
-            prompt_template = f"""You are a conversational AI that is an expert in the Modal library.
+            prompt_template = f"""
+You are a conversational AI that is an expert in the Modal library.
 Your form is the Modal logo, a pair of characters named Moe and Dal. Refer to yourself in the plural as 'we' and 'us' when appropriate.
-Because you are a conversational AI, you will provide your response with three parts described below.
-It is very important that you don't use terms like @modal.function in the answer_for_tts part of the response.
-Instead you can say "the modal function decorator" or something like that.
-The proper code will be included in the code_blocks part of the response.
-Additionally, answer the user's questions concisely and in English. Do not use single word sentences like "Hello!" or "Okay". These do not work well with text-to-speech. 
+Your job is to provide useful information about Modal and developing with Modal.
+Your answer will consist of three parts: an answer that will be played as poken audio (answer_for_tts), snippets of useful code related to the user's query (code blocks),
+and relevant links pulled directly from the documentation context (links).
 
-Based on the provided context, conversation history, and current question, 
-generate a structured response based on the schema below.
+Modal Documentation Context: 
 
-Modal Documentation Context: {context_str}{history_context}
-Current Question: {question}
+{context_str}
+
+Conversation History:
+
+{history_context}
+
+Current Question: 
+
+{question}
 
 You MUST respond with ONLY the following JSON format (no additional text):
 
 {{
-    "answer_for_tts": "A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Explain concepts simply and avoid bullet points.",
-    "code_blocks": ["List of actual code snippets that would be useful to display separately"],
-    "links": ["List of relevant URLs or documentation references"]
+    "answer_for_tts": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
+    "code_blocks": list[str], List of actual code snippets that would be useful to display separately
+    "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context.
 }}
 
 IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text."""
@@ -447,20 +534,18 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             vllm_start = time.perf_counter()
             streaming_generator = await self.generate_vllm_completion(
                 prompt_template,
-                max_tokens=1024,
+                max_tokens=_DEFAULT_MAX_TOKENS,
                 temperature=0.1,
                 stream=True
             )
             print(f"⏱️ [Streaming] vLLM generator setup took {time.perf_counter() - vllm_start:.3f}s")
             
-            # State for incremental JSON parsing
-            accumulated_text = ""
-            tts_content_streamed = False
+            # Stream raw output with timing
             first_token_time = None
             token_count = 0
+            accumulated_text = ""
             
             async for generation in streaming_generator:
-                # Extract text from vLLM generation
                 if generation.outputs:
                     if first_token_time is None:
                         first_token_time = time.perf_counter()
@@ -469,134 +554,45 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                     accumulated_text = generation.outputs[0].text
                     token_count += 1
                     
-                    # Try to parse JSON incrementally
-                    if not tts_content_streamed and '"answer_for_tts"' in accumulated_text:
-                        # Extract TTS content as it becomes available
-                        tts_match = re.search(r'"answer_for_tts":\s*"([^"]*(?:\\"[^"]*)*)"', accumulated_text, re.DOTALL)
-                        if tts_match:
-                            tts_content = tts_match.group(1).replace('\\"', '"')
-                            if tts_content and len(tts_content) > 10:
-                                tts_content_streamed = True
-                                yield {"type": "tts_content", "content": tts_content}
-                    
-                    # Try to parse complete JSON for structured data
-                    json_match = re.search(r'\{.*\}', accumulated_text, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(0)
-                        try:
-                            parsed_json = json.loads(json_str)
-                            code_blocks = parsed_json.get("code_blocks", [])
-                            links = parsed_json.get("links", [])
-                            
-                            total_time = time.perf_counter() - total_start
-                            print(f"⏱️ [Streaming] Complete response took {total_time:.3f}s, {token_count} tokens")
-                            yield {
-                                "type": "structured_data",
-                                "code_blocks": code_blocks,
-                                "links": links,
-                                "complete": True
-                            }
-                            return
-                        except json.JSONDecodeError as e:
-                            print(f"JSON parsing failed: {e}")
-                            continue
+                    # Yield raw text as it comes in
+                    yield {"type": "raw_text", "content": accumulated_text}
             
-            # Handle final result if not already processed
-            if accumulated_text and not tts_content_streamed:
-                # Try final parsing
-                json_match = re.search(r'\{.*\}', accumulated_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    try:
-                        parsed_json = json.loads(json_str)
-                        tts_content = parsed_json.get("answer_for_tts", "")
-                        code_blocks = parsed_json.get("code_blocks", [])
-                        links = parsed_json.get("links", [])
-                        
-                        if tts_content:
-                            yield {"type": "tts_content", "content": tts_content}
-                        
-                        total_time = time.perf_counter() - total_start
-                        print(f"⏱️ [Streaming] Final JSON parsing took {total_time:.3f}s")
-                        yield {
-                            "type": "structured_data",
-                            "code_blocks": code_blocks,
-                            "links": links,
-                            "complete": True
-                        }
-                        return
-                    except json.JSONDecodeError:
-                        pass
-                
-                # Fallback: use accumulated text as TTS content
-                if accumulated_text.strip():
-                    total_time = time.perf_counter() - total_start
-                    print(f"⏱️ [Streaming] Text fallback took {total_time:.3f}s")
-                    yield {"type": "tts_content", "content": accumulated_text.strip()}
-                    yield {"type": "structured_data", "code_blocks": [], "links": [], "complete": True}
-                    return
-            
-            # Ultimate fallback
+            # Final timing
             total_time = time.perf_counter() - total_start
-            print(f"⏱️ [Streaming] Ultimate fallback after {total_time:.3f}s")
-            basic_prompt = f"{self.prompt} {question}"
-            fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=512)
-            yield {"type": "tts_content", "content": fallback_response}
-            yield {"type": "structured_data", "code_blocks": [], "links": [], "complete": True}
+            print(f"⏱️ [Streaming] Complete response took {total_time:.3f}s, {token_count} tokens")
+            
+            # Mark completion
+            yield {"type": "complete", "content": accumulated_text, "total_time": total_time}
             
         except Exception as e:
             total_time = time.perf_counter() - total_start
             print(f"vLLM streaming error: {e}, total time: {total_time:.3f}s")
-            # Error fallback
-            try:
-                basic_prompt = f"{self.prompt} {question}"
-                fallback_response = await self.generate_vllm_completion(basic_prompt, max_tokens=512)
-                yield {"type": "tts_content", "content": fallback_response}
-            except:
-                yield {"type": "tts_content", "content": "Sorry, I encountered an error processing your request."}
-            yield {"type": "structured_data", "code_blocks": [], "links": [], "complete": True}
+            yield {"type": "error", "content": str(e), "total_time": total_time}
     
     def setup_fastapi(self):
         from typing import List, Optional
         from fastapi import FastAPI, HTTPException
         from pydantic import BaseModel
-        from openai.types.chat.chat_completion import ChatCompletionRequest
 
         self.web_app = FastAPI(title="vLLM RAG API", version="1.0.0")
         
-        # class Message(BaseModel):
-        #     role: str
-        #     content: str
+        class Message(BaseModel):
+            role: str
+            content: str
         
-        # class ChatCompletionRequest(BaseModel):
-        #     model: str
-        #     messages: List[Message]
-        #     max_completion_tokens: Optional[int] = 500
-        #     temperature: Optional[float] = 0.1
-        #     stream: Optional[bool] = False
+        class ChatCompletionRequest(BaseModel):
+            model: str
+            messages: List[Message]
+            max_tokens: Optional[int] = 500
+            temperature: Optional[float] = 0.1
+            stream: Optional[bool] = False
             
-        #     class Config:
-        #         extra = "allow"
+            class Config:
+                extra = "allow"
         
-        # @self.web_app.get("/v1/models")
-        # def list_models():
-        #     return {
-        #         "object": "list",
-        #         "data": [
-        #             {
-        #                 "id": LLM_MODEL,
-        #                 "object": "model",
-        #                 "created": 1234567890,
-        #                 "owned_by": "modal",
-        #             },
-        #             {
-        #                 "id": "modal-rag",
-        #                 "object": "model",
-        #                 "created": 1234567890,
-        #                 "owned_by": "modal",
-        #             },
-        #         ],
-        #     }
+        @self.web_app.get("/health")
+        def health_check():
+            return {"status": "healthy"}
         
         @self.web_app.post("/v1/chat/completions")
         async def chat_completions(request: ChatCompletionRequest):
@@ -642,15 +638,19 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                         },
                     )
                 else:
-                    # Non-streaming response
-                    structured_result = await self.generate_streaming_structured_response(current_user_message, formatted_history)
+                    # Non-streaming response - collect all streaming output
+                    completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+                    created_timestamp = int(time.time())
+                    collected_content = ""
                     
-                    full_response = ""
-                    async for result in streaming_generator:
-                        if result["type"] == "tts_content":
-                            full_response += result["content"]
-                        elif result["type"] == "structured_data":
-                            full_response += result["content"]
+                    async for result in self.generate_streaming_structured_response(current_user_message, formatted_history):
+                        if result["type"] == "raw_text":
+                            collected_content = result["content"]
+                        elif result["type"] == "complete":
+                            collected_content = result["content"]
+                            break
+                        elif result["type"] == "error":
+                            raise HTTPException(status_code=500, detail=result["content"])
                             
                     response = {
                         "id": completion_id,
@@ -661,20 +661,15 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                             "index": 0,
                             "message": {
                                 "role": "assistant",
-                                "content": structured_result.answer_for_tts,
+                                "content": collected_content,
                             },
                             "finish_reason": "stop",
                         }],
                         "usage": {
                             "prompt_tokens": len(current_user_message.split()),
-                            "completion_tokens": len(structured_result.answer_for_tts.split()),
-                            "total_tokens": len(current_user_message.split()) + len(structured_result.answer_for_tts.split()),
+                            "completion_tokens": len(collected_content.split()),
+                            "total_tokens": len(current_user_message.split()) + len(collected_content.split()),
                         },
-                        "modal_structured_data": {
-                            "code_blocks": structured_result.code_blocks,
-                            "links": structured_result.links,
-                            "original_query": current_user_message,
-                        }
                     }
                     
                     return response
@@ -682,17 +677,17 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
     
-    def _get_streaming_generator(self, user_message: str):
+    def _get_streaming_generator(self, user_message: str, formatted_history: str):
         
-        import json
+        import asyncio
         
         print(f"Streaming response for {user_message}")
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
-        created_timestamp = int(time.time())
         
-        async def generate_streaming_response():
+        async def streaming_response():
             try:
                 # First chunk
+                created_timestamp = int(time.time())
                 first_chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
@@ -707,16 +702,17 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 yield f"data: {json.dumps(first_chunk)}\n\n"
                 
                 # Process streaming results in real-time
-                structured_data = None
+                current_text = ""
                 
-                async for result in self.generate_streaming_structured_response(current_user_message, formatted_history):
-                    if result["type"] == "tts_content":
-                        # Stream TTS content as it becomes available
-                        tts_content = result["content"]
-                        words = tts_content.split()
+                async for result in self.generate_streaming_structured_response(user_message, formatted_history):
+                    if result["type"] == "raw_text":
+                        # Stream the raw text as it comes in
+                        new_content = result["content"]
                         
-                        for i, word in enumerate(words):
-                            content = f" {word}" if i > 0 else word
+                        # Only send the new part that was added
+                        if len(new_content) > len(current_text):
+                            delta_content = new_content[len(current_text):]
+                            current_text = new_content
                             
                             content_chunk = {
                                 "id": completion_id,
@@ -725,36 +721,38 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                                 "model": "modal_rag",
                                 "choices": [{
                                     "index": 0,
-                                    "delta": {"content": content},
+                                    "delta": {"content": delta_content},
                                     "finish_reason": None,
                                 }],
                             }
                             yield f"data: {json.dumps(content_chunk)}\n\n"
-                            await asyncio.sleep(0.01)
                             
-                    elif result["type"] == "structured_data":
-                        structured_data = result
-                        # If this is the completion signal, send final chunk
-                        if result.get("complete", False):
-                            break
+                    elif result["type"] == "complete":
+                        # Final result received
+                        break
+                    elif result["type"] == "error":
+                        # Handle error case
+                        error_chunk = {
+                            "error": {
+                                "message": result["content"],
+                                "type": "server_error",
+                                "code": "internal_error",
+                            }
+                        }
+                        yield f"data: {json.dumps(error_chunk)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
                 
-                # Final chunk
-                modal_structured_data = {
-                    "code_blocks": structured_data.get("code_blocks", []) if structured_data else [],
-                    "links": structured_data.get("links", []) if structured_data else [],
-                    "original_query": current_user_message,
-                }
+                # Final chunk - stream is complete
                 final_chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
-                    "created": created_timestamp,
+                    "created": int(time.time()),
                     "model": "modal_rag",
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {
-                                "content": f"<struct>{json.dumps(modal_structured_data)}</struct>"
-                            },
+                            "delta": {},
                             "finish_reason": "stop"
                         }
                     ],
@@ -773,13 +771,13 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 yield f"data: {json.dumps(error_chunk)}\n\n"
                 yield "data: [DONE]\n\n"
         
-        return generate_streaming_response()
+        return streaming_response()
         
     @modal.method()
     async def query_rag(self, question: str) -> str:
         """Direct method to query the RAG system with vLLM."""
-        basic_prompt = f"{self.prompt} {question}"
-        return await self.generate_vllm_completion(basic_prompt, max_tokens=512)
+        basic_prompt = f"{get_system_prompt()}\n\nUser: {question}\nAssistant:"
+        return await self.generate_vllm_completion(basic_prompt, max_tokens=_DEFAULT_MAX_TOKENS)
     
     @modal.method()
     async def query_rag_structured(self, question: str, conversation_history: str = "") -> dict:
@@ -801,26 +799,20 @@ def get_system_prompt():
     """
     return system_prompt
 
-# Setup function
-@app.function()
-def setup_rag_system():
-    """Setup the complete RAG system."""
-    print("Setting up RAG system...")
-    download_models.remote()
-    create_vector_index.remote()
-    print("RAG system setup complete!")
+
 
 @app.local_entrypoint()
 def test_service():
-    """Test the vLLM RAG API."""
+    """Test both streaming and non-streaming vLLM RAG API."""
     import requests
+    import json
     
     # Setup the system first
-    setup_rag_system.remote()
+    ChromaVectorIndex().setup_rag_system.remote()
     
     # Get the server URL
-    server_url = VLLMRAGServer.fastapi_app.web_url
-    print(f"Testing vLLM RAG API at {server_url}")
+    server_url = VLLMRAGServer().fastapi_app.get_web_url()
+    print(f"Testing vLLM RAG Streaming API at {server_url}")
     
     # Wait for server to be ready
     print("Waiting for server to be ready...")
@@ -837,40 +829,214 @@ def test_service():
                 return
             time.sleep(10)
     
-    # Test the API
-    print("\n" + "=" * 50)
-    print("🚀 Testing vLLM RAG API")
-    
     test_question = "How do I create a Modal function with GPU support?"
-    payload = {
+    
+    # Test 1: Non-streaming API
+    print("\n" + "=" * 70)
+    print("🚀 Testing NON-STREAMING vLLM RAG API")
+    print("=" * 70)
+    
+    payload_non_streaming = {
         "model": "modal-rag",
         "messages": [{"role": "user", "content": test_question}],
-        "max_tokens": 300,
-        "temperature": 0.1
+        "max_tokens": _DEFAULT_MAX_TOKENS,
+        "temperature": 0.1,
+        "stream": False  # Non-streaming
     }
     
+    print(f"🔍 Question: {test_question}")
+    print(f"📄 Non-streaming response:")
+    print("-" * 70)
+    
     try:
+        start_time = time.perf_counter()
+        
         response = requests.post(
             f"{server_url}/v1/chat/completions",
-            json=payload,
+            json=payload_non_streaming,
             headers={"Content-Type": "application/json"},
-            timeout=60,
+            timeout=120,
         )
         
         if response.status_code == 200:
+            total_time = time.perf_counter() - start_time
             result = response.json()
-            answer = result["choices"][0]["message"]["content"]
-            print(f"🔍 Question: {test_question}")
-            print(f"🗣️ Answer: {answer}")
             
-            if "modal_structured_data" in result:
-                structured_data = result["modal_structured_data"]
-                print(f"💻 Code Blocks: {len(structured_data['code_blocks'])}")
-                print(f"🔗 Links: {len(structured_data['links'])}")
+            print(f"⏱️  Response received in {total_time:.3f}s")
+            print(f"📋 Response structure:")
+            print(f"   • ID: {result.get('id', 'N/A')}")
+            print(f"   • Object: {result.get('object', 'N/A')}")
+            print(f"   • Model: {result.get('model', 'N/A')}")
+            print(f"   • Created: {result.get('created', 'N/A')}")
+            
+            if "choices" in result and result["choices"]:
+                choice = result["choices"][0]
+                message = choice.get("message", {})
+                content = message.get("content", "")
+                
+                print(f"   • Finish reason: {choice.get('finish_reason', 'N/A')}")
+                print(f"   • Content length: {len(content)} characters")
+                
+                if "usage" in result:
+                    usage = result["usage"]
+                    print(f"   • Usage: {usage.get('prompt_tokens', 0)} prompt + {usage.get('completion_tokens', 0)} completion = {usage.get('total_tokens', 0)} total tokens")
+                
+                print(f"\n🗣️  Complete response:")
+                print("-" * 40)
+                print(content)
+                print("-" * 40)
+            else:
+                print("❌ No choices in response")
+                
         else:
             print(f"❌ Error {response.status_code}: {response.text}")
             
     except Exception as e:
-        print(f"❌ Request failed: {e}")
+        print(f"❌ Non-streaming request failed: {e}")
+        import traceback
+        traceback.print_exc()
     
-    print(f"\n🌐 You can test the API at: {server_url}") 
+    # Test 2: Streaming API
+    print("\n" + "=" * 70)
+    print("🚀 Testing STREAMING vLLM RAG API")
+    print("=" * 70)
+    
+    payload_streaming = {
+        "model": "modal-rag",
+        "messages": [{"role": "user", "content": test_question}],
+        "max_tokens": _DEFAULT_MAX_TOKENS,
+        "temperature": 0.1,
+        "stream": True  # Enable streaming
+    }
+    
+    print(f"🔍 Question: {test_question}")
+    print(f"📡 Streaming response:")
+    print("-" * 70)
+    
+    try:
+        start_time = time.perf_counter()
+        
+        response = requests.post(
+            f"{server_url}/v1/chat/completions",
+            json=payload_streaming,
+            headers={"Content-Type": "application/json"},
+            stream=True,  # Enable streaming response
+            timeout=120,
+        )
+        
+        if response.status_code == 200:
+            accumulated_content = ""
+            chunk_count = 0
+            first_chunk_time = None
+            completion_id = None
+            
+            print("🌊 Streaming chunks:")
+            
+            for line in response.iter_lines():
+                if line:
+                    line_text = line.decode('utf-8')
+                    
+                    # Skip empty lines and handle SSE format
+                    if line_text.startswith('data: '):
+                        data_part = line_text[6:]  # Remove 'data: ' prefix
+                        
+                        if data_part == '[DONE]':
+                            total_time = time.perf_counter() - start_time
+                            print(f"\n✅ Stream completed in {total_time:.3f}s")
+                            break
+                        
+                        try:
+                            chunk_data = json.loads(data_part)
+                            chunk_count += 1
+                            
+                            if completion_id is None:
+                                completion_id = chunk_data.get("id", "N/A")
+                                print(f"📋 Stream structure:")
+                                print(f"   • ID: {completion_id}")
+                                print(f"   • Object: {chunk_data.get('object', 'N/A')}")
+                                print(f"   • Model: {chunk_data.get('model', 'N/A')}")
+                            
+                            if first_chunk_time is None:
+                                first_chunk_time = time.perf_counter()
+                                ttfb = first_chunk_time - start_time
+                                print(f"⚡ First chunk received in {ttfb:.3f}s")
+                            
+                            # Check for errors
+                            if "error" in chunk_data:
+                                print(f"❌ Error in stream: {chunk_data['error']}")
+                                break
+                            
+                            # Extract content from chunk
+                            if "choices" in chunk_data and chunk_data["choices"]:
+                                choice = chunk_data["choices"][0]
+                                if "delta" in choice and "content" in choice["delta"]:
+                                    content = choice["delta"]["content"]
+                                    accumulated_content += content
+                                    
+                                    # Print the new content (with some formatting)
+                                    print(f"[{chunk_count:3d}] +{len(content):2d} chars: '{content[:50]}{'...' if len(content) > 50 else ''}'"[:70])
+                                
+                                # Check for finish
+                                if choice.get("finish_reason") == "stop":
+                                    total_time = time.perf_counter() - start_time
+                                    print(f"\n🏁 Finished streaming in {total_time:.3f}s")
+                                    break
+                                    
+                        except json.JSONDecodeError as e:
+                            print(f"⚠️  Failed to parse chunk: {e}")
+                            print(f"    Raw data: {data_part[:100]}...")
+            
+            print("\n" + "=" * 70)
+            print("📝 STREAMING FINAL RESULT:")
+            print("=" * 70)
+            print(f"📊 Total chunks: {chunk_count}")
+            print(f"📏 Total length: {len(accumulated_content)} characters")
+            print(f"🗣️  Complete response:")
+            print("-" * 40)
+            print(accumulated_content)
+            print("-" * 40)
+            
+        else:
+            print(f"❌ Error {response.status_code}: {response.text}")
+            
+    except Exception as e:
+        print(f"❌ Streaming request failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print("\n" + "=" * 70)
+    print("📊 RESPONSE STRUCTURE COMPARISON")
+    print("=" * 70)
+    print("Non-streaming response structure:")
+    print("├── id: 'chatcmpl-xxx'")
+    print("├── object: 'chat.completion'")
+    print("├── created: timestamp")
+    print("├── model: 'modal_rag'")
+    print("├── choices: [")
+    print("│   ├── index: 0")
+    print("│   ├── message: {role: 'assistant', content: 'full_text'}")
+    print("│   └── finish_reason: 'stop'")
+    print("├── usage: {prompt_tokens, completion_tokens, total_tokens}")
+    print("")
+    print("Streaming response structure (per chunk):")
+    print("├── id: 'chatcmpl-xxx' (same across chunks)")
+    print("├── object: 'chat.completion.chunk'")
+    print("├── created: timestamp")
+    print("├── model: 'modal_rag'")
+    print("└── choices: [")
+    print("    ├── index: 0")
+    print("    ├── delta: {content: 'incremental_text'}")
+    print("    └── finish_reason: null (or 'stop' on final chunk)")
+    
+    print(f"\n🌐 You can test the API manually at: {server_url}")
+    print(f"💡 Try these curl commands:")
+    print(f"\n📄 Non-streaming:")
+    print(f"""curl -X POST "{server_url}/v1/chat/completions" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"model":"modal-rag","messages":[{{"role":"user","content":"What is Modal?"}}],"stream":false}}'""")
+    print(f"\n📡 Streaming:")
+    print(f"""curl -X POST "{server_url}/v1/chat/completions" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"model":"modal-rag","messages":[{{"role":"user","content":"What is Modal?"}}],"stream":true}}' \\
+  --no-buffer""") 
