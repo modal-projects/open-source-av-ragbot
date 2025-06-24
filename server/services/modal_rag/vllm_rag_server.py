@@ -276,7 +276,13 @@ class VLLMRAGServer:
         except Exception as e:
             print(f"⚠️ vLLM warmup failed: {e}")
 
-    async def generate_vllm_completion(self, prompt: str, max_tokens: int = _DEFAULT_MAX_TOKENS, temperature: float = 0.1, stream: bool = False):
+    async def generate_vllm_completion(
+            self, 
+            prompt: str, 
+            max_tokens: int = _DEFAULT_MAX_TOKENS, 
+            temperature: float = 0.1, 
+            stream: bool = False
+        ):
         """Generate completion using vLLM AsyncLLMEngine."""
         from dataclasses import asdict
         from vllm import SamplingParams
