@@ -38,7 +38,7 @@ from server.bot.animation import TalkingAnimation, get_frames
 
 from ..services.stt.parakeet_service import ParakeetSTTService
 from ..services.tts.chatterbox_service import ChatterboxTTSService
-from ..services.rag.structured_rag_llm_service import ModalRagLLMService
+from ..services.rag.modal_rag_llm_service import ModalRagLLMService
 
 try:
     logger.remove(0)
