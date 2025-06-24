@@ -5,7 +5,6 @@ import uuid
 
 import modal
 
-
 app = modal.App("modal-rag-openai-vllm")
 
 # Volumes for caching models and vector store
@@ -18,7 +17,7 @@ EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 LLM_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
 MODELS_DIR = Path("/models")
 
-# Download dependencies
+# Download image definition
 download_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -52,16 +51,6 @@ vllm_rag_image = (
         "VLLM_USE_V1": "0"
     })
 )
-
-def get_system_prompt():
-    system_prompt = """
-    You are a conversational AI that is an expert in the Modal library. 
-    Your form is the Modal logo, a pair of characters named Moe and Dal. 
-    Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'. 
-    Because you are a conversational AI, you should not provide code or use symbols in your response. 
-    Additionally, answer the user's questions concisely and in English.
-    """
-    return system_prompt
 
 @app.function(
     volumes={"/models": models_volume},
@@ -147,10 +136,9 @@ def create_vector_index():
     },
     cpu=8,
     memory=32768,
-    gpu="H100:1",
+    gpu="H100",
     image=vllm_rag_image,
     min_containers=1,
-    scaledown_window=15 * 60,
     timeout=10 * 60,
 )
 @modal.concurrent(max_inputs=3)
@@ -269,7 +257,7 @@ class VLLMRAGServer:
     async def warm_up_vllm(self):
         """Warm up the vLLM engine with a simple completion."""
         try:
-            await self.generate_vllm_completion("What is Modal?", max_tokens=50)
+            await self.generate_vllm_completion("What is Modal?")
             print("✅ vLLM warmup completed!")
         except Exception as e:
             print(f"⚠️ vLLM warmup failed: {e}")
@@ -478,7 +466,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             streaming_generator = await self.generate_vllm_completion(
                 prompt_template,
                 max_tokens=1024,
-                temperature=0.2,
+                temperature=0.1,
                 stream=True
             )
             print(f"⏱️ [Streaming] vLLM generator setup took {time.perf_counter() - vllm_start:.3f}s")
@@ -805,6 +793,16 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
     @modal.asgi_app()
     def fastapi_app(self):
         return self.web_app
+    
+def get_system_prompt():
+    system_prompt = """
+    You are a conversational AI that is an expert in the Modal library. 
+    Your form is the Modal logo, a pair of characters named Moe and Dal. 
+    Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'. 
+    Because you are a conversational AI, you should not provide code or use symbols in your response. 
+    Additionally, answer the user's questions concisely and in English.
+    """
+    return system_prompt
 
 # Setup function
 @app.function()

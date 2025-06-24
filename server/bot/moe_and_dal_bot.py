@@ -1,19 +1,19 @@
-#
-# Copyright (c) 2024–2025, Daily
-#
-# SPDX-License-Identifier: BSD 2-Clause License
-#
+# Built from Pipecat's Modal Deployment example here:
+# https://github.com/pipecat-ai/pipecat/tree/main/examples/deployment/modal-example
 
-"""Gemini Bot Implementation.
 
-This module implements a chatbot using Google's Gemini Multimodal Live model.
-It includes:
-- Real-time audio/video interaction through Daily
-- Animated robot avatar
-- Speech-to-speech model
+"""Moe and Dal RAG Bot Implementation.
+
+This module implements a chatbot using a custom RAG (Retrieval-Augmented Generation) 
+system with VLLM backend. It includes:
+- Real-time audio/video interaction through WebRTC
+- Animated robot avatar with talking animations
+- Speech-to-speech pipeline with Parakeet STT and Chatterbox TTS
+- Structured RAG LLM service for enhanced responses
+- Voice activity detection and smart turn management
 
 The bot runs as part of a pipeline that processes audio/video frames and manages
-the conversation flow using Gemini's streaming capabilities.
+the conversation flow using the RAG system's streaming capabilities.
 """
 
 import sys
@@ -50,71 +50,64 @@ except ValueError:
 
 # REPLACE WITH YOUR MODAL URL ENDPOINT
 vllm_url = "https://modal-labs-shababo-dev--modal-rag-openai-vllm-vllmragser-cfa200.modal.run"
-vllm_api_key = "super-secret-key" #os.getenv("VLLM_API_KEY", "super-secret-key")
-
 chatterbox_url = "https://modal-labs-shababo-dev--chatterbox-tts-chatterbox-tts.modal.run"
+
+_AUDIO_INPUT_SAMPLE_RATE = 16000
+_AUDIO_OUTPUT_SAMPLE_RATE = 24000
+_MOE_AND_DAL_FRAME_RATE = 12
 
 async def run_bot(webrtc_connection: SmallWebRTCConnection):
     """Main bot execution function.
 
     Sets up and runs the bot pipeline including:
-    - Daily video transport with specific audio parameters
-    - Gemini Live multimodal model integration
-    - Voice activity detection
-    - Animation processing
+    - WebRTC transport with audio/video parameters
+    - Structured RAG LLM service with vLLM backend
+    - Parakeet STT and Chatterbox TTS services
+    - Voice activity detection and smart turn management
+    - Animation processing with talking animations
     - RTVI event handling
     """
     async with aiohttp.ClientSession() as session:
         transport_params = TransportParams(
             audio_in_enabled=True,
-            audio_in_sample_rate=16000,
+            audio_in_sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
             audio_out_enabled=True,
-            audio_out_sample_rate=24000,
+            audio_out_sample_rate=_AUDIO_OUTPUT_SAMPLE_RATE,
             video_out_enabled=True,
             video_out_width=1024,
             video_out_height=576,
-            video_out_framerate=12,
+            video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(stop_secs=0.2)
             ),
             turn_analyzer=LocalSmartTurnAnalyzer(
                 smart_turn_model_path=None, # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
-                    stop_secs=2.0,
-                    pre_speech_ms=0.0,
+                    stop_secs=3.0,
+                    pre_speech_ms=0.1,
                     max_duration_secs=8.0
                 )
             ),
         )
 
         transport = SmallWebRTCTransport(
-            webrtc_connection=webrtc_connection, params=transport_params
-        )
-
-        markdown_filter = MarkdownTextFilter(
-            MarkdownTextFilter.InputParams(
-                filter_code=True,
-                filter_tables=True
-            )
+            webrtc_connection=webrtc_connection, 
+            params=transport_params,
         )
         
         stt = ParakeetSTTService(
-            sample_rate=16000,
+            sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
         )
 
-        # Initialize LLM service
-        params = OpenAILLMService.InputParams(
-            extra = {
-                "stream": True,
-            }
-        )
+        # Initialize OpenAI API compatibleLLM service
         llm = StructuredRAGLLMService(
-            # To use OpenAI
-            api_key=vllm_api_key,
-            # Or, to use a local vLLM (or similar) api server
-            model="modal-rag", #neuralmagic/Meta-Llama-3.1-8B-Instruct-quantized.w4a16",
+            model="modal-rag",
             base_url=f"{vllm_url}/v1",
-            params=params,
+            params=OpenAILLMService.InputParams(
+                extra = {
+                    "stream": True,
+                },
+            ),
         )
 
         messages = [
@@ -129,16 +122,14 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         context = OpenAILLMContext(messages)
         context_aggregator = llm.create_context_aggregator(context)
 
-
         ta = TalkingAnimation()
 
-        # Create structured output parser to extract answer_for_tts from JSON
-        # structured_parser = StructuredOutputParser()
-        
-        # You can access extracted data at any time with:
-        # data = structured_parser.get_extracted_data()
-        # print(f"Code blocks: {data['code_blocks']}")
-        # print(f"Links: {data['links']}")
+        markdown_filter = MarkdownTextFilter(
+            MarkdownTextFilter.InputParams(
+                filter_code=True,
+                filter_tables=True
+            )
+        )
 
         tts = ChatterboxTTSService(
             aiohttp_session=session,
@@ -147,11 +138,15 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             text_filter=markdown_filter,
         )
 
-
-        #
         # RTVI events for Pipecat client UI
-        #
         rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
+        @rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
+            logger.info("Pipecat client ready.")
+            await rtvi.set_bot_ready()
+            # Kick off the conversation
+            await task.queue_frames([context_aggregator.user().get_context_frame()])
 
         pipeline = Pipeline(
             [
@@ -172,18 +167,10 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             params=PipelineParams(
                 allow_interruptions=True,
                 enable_metrics=True,
-                # enable_usage_metrics=True,
+                enable_usage_metrics=True,
             ),
             observers=[RTVIObserver(rtvi)],
         )
-        await task.queue_frame(get_frames("thinking"))
-
-        @rtvi.event_handler("on_client_ready")
-        async def on_client_ready(rtvi):
-            logger.info("Pipecat client ready.")
-            await rtvi.set_bot_ready()
-            # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
 
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
@@ -201,7 +188,9 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             await task.cancel()
             logger.info("Pipeline task cancelled.")
 
-        runner = PipelineRunner()
+        await task.queue_frame(get_frames("thinking"))
 
+        runner = PipelineRunner()
         await runner.run(task)
+
         logger.info("Pipeline task Finished.")

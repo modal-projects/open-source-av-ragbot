@@ -1,23 +1,20 @@
 import json
 
+from openai import AsyncStream
+from openai.types.chat import ChatCompletionChunk
+
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.utils.tracing.service_decorators import traced_llm
-from pipecat.processors.aggregators.openai_llm_context import (
-    OpenAILLMContext,
-)
-from pipecat.frames.frames import (
-    LLMTextFrame,
-)
-from openai import (
-    AsyncStream,
-)
-from openai.types.chat import ChatCompletionChunk
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.frames.frames import LLMTextFrame
 from pipecat.metrics.metrics import LLMTokenUsage
 from pipecat.services.llm_service import FunctionCallFromLLM
 
 class StructuredRAGLLMService(OpenAILLMService):
     def __init__(self, *args, **kwargs):
+        if not kwargs.get("api_key"):
+            kwargs["api_key"] = "super-secret-key"
         super().__init__(*args, **kwargs)
 
     @traced_llm
@@ -37,6 +34,7 @@ class StructuredRAGLLMService(OpenAILLMService):
         )
 
         async for chunk in chunk_stream:
+            
             if chunk.usage:
                 tokens = LLMTokenUsage(
                     prompt_tokens=chunk.usage.prompt_tokens,
