@@ -38,7 +38,7 @@ from server.bot.animation import TalkingAnimation, get_frames
 
 from ..services.stt.parakeet_service import ParakeetSTTService
 from ..services.tts.chatterbox_service import ChatterboxTTSService
-from ..services.rag.structured_rag_llm_service import StructuredRAGLLMService
+from ..services.rag.structured_rag_llm_service import ModalRagLLMService
 
 try:
     logger.remove(0)
@@ -100,7 +100,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         )
 
         # Initialize OpenAI API compatibleLLM service
-        llm = StructuredRAGLLMService(
+        llm = ModalRagLLMService(
             model="modal-rag",
             base_url=f"{vllm_url}/v1",
             params=OpenAILLMService.InputParams(

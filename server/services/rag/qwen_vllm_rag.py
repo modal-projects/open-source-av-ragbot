@@ -190,9 +190,9 @@ class VLLMRAGServer:
         from transformers import AutoTokenizer
         import chromadb
 
-        from llama_index.core import VectorStoreIndex
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-        from llama_index.vector_stores.chroma import ChromaVectorStore
+        # from llama_index.core import VectorStoreIndex
+        # from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        # from llama_index.vector_stores.chroma import ChromaVectorStore
         
         from vllm.engine.arg_utils import AsyncEngineArgs
         from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -350,12 +350,12 @@ class VLLMRAGServer:
                         if node.text is not None:
                             valid_texts.append(node.text)
                         else:
-                            print(f"⚠️ [Streaming] Found node with None text, skipping")
+                            print("⚠️ [Streaming] Found node with None text, skipping")
                     
                     context_str = "\n\n".join(valid_texts) if valid_texts else "No valid context found."
                 except Exception as e:
-                    print(f"⚠️ [Streaming] RAG retrieval failed: {e}")
-                    context_str = "Context retrieval failed - using fallback."
+                    print(f"⚠️ [Streaming] RAG retrieval failed: {type(e)}: {e}")
+                    raise e
             
             rag_time = time.perf_counter() - rag_start
             print(f"⏱️ [Streaming] RAG retrieval took {rag_time:.3f}s")
@@ -369,8 +369,6 @@ class VLLMRAGServer:
 Modal Documentation Context: 
 
 {context_str}
-
-Conversation History:
 
 {history_context}
 
@@ -655,8 +653,6 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
     """
     return system_prompt
 
-
-
 @app.local_entrypoint()
 def test_service():
     """Test both streaming and non-streaming vLLM RAG API."""
@@ -719,7 +715,7 @@ def test_service():
             result = response.json()
             
             print(f"⏱️  Response received in {total_time:.3f}s")
-            print(f"📋 Response structure:")
+            print("📋 Response structure:")
             print(f"   • ID: {result.get('id', 'N/A')}")
             print(f"   • Object: {result.get('object', 'N/A')}")
             print(f"   • Model: {result.get('model', 'N/A')}")
@@ -737,7 +733,7 @@ def test_service():
                     usage = result["usage"]
                     print(f"   • Usage: {usage.get('prompt_tokens', 0)} prompt + {usage.get('completion_tokens', 0)} completion = {usage.get('total_tokens', 0)} total tokens")
                 
-                print(f"\n🗣️  Complete response:")
+                print("🗣️  Complete response:")
                 print("-" * 40)
                 print(content)
                 print("-" * 40)
@@ -766,7 +762,7 @@ def test_service():
     }
     
     print(f"🔍 Question: {test_question}")
-    print(f"📡 Streaming response:")
+    print("📡 Streaming response:")
     print("-" * 70)
     
     try:
@@ -798,7 +794,7 @@ def test_service():
                         
                         if data_part == '[DONE]':
                             total_time = time.perf_counter() - start_time
-                            print(f"\n✅ Stream completed in {total_time:.3f}s")
+                            print(f"✅ Stream completed in {total_time:.3f}s")
                             break
                         
                         try:
@@ -807,7 +803,7 @@ def test_service():
                             
                             if completion_id is None:
                                 completion_id = chunk_data.get("id", "N/A")
-                                print(f"📋 Stream structure:")
+                                print("📋 Stream structure:")
                                 print(f"   • ID: {completion_id}")
                                 print(f"   • Object: {chunk_data.get('object', 'N/A')}")
                                 print(f"   • Model: {chunk_data.get('model', 'N/A')}")
@@ -847,7 +843,7 @@ def test_service():
             print("=" * 70)
             print(f"📊 Total chunks: {chunk_count}")
             print(f"📏 Total length: {len(accumulated_content)} characters")
-            print(f"🗣️  Complete response:")
+            print("🗣️  Complete response:")
             print("-" * 40)
             print(accumulated_content)
             print("-" * 40)
@@ -861,7 +857,7 @@ def test_service():
         traceback.print_exc()
     
     # Summary
-    print("\n" + "=" * 70)
+    print("=" * 70)
     print("📊 RESPONSE STRUCTURE COMPARISON")
     print("=" * 70)
     print("Non-streaming response structure:")
@@ -885,13 +881,13 @@ def test_service():
     print("    ├── delta: {content: 'incremental_text'}")
     print("    └── finish_reason: null (or 'stop' on final chunk)")
     
-    print(f"\n🌐 You can test the API manually at: {server_url}")
-    print(f"💡 Try these curl commands:")
-    print(f"\n📄 Non-streaming:")
+    print(f"🌐 You can test the API manually at: {server_url}")
+    print("💡 Try these curl commands:")
+    print("📄 Non-streaming:")
     print(f"""curl -X POST "{server_url}/v1/chat/completions" \\
   -H "Content-Type: application/json" \\
   -d '{{"model":"modal-rag","messages":[{{"role":"user","content":"What is Modal?"}}],"stream":false}}'""")
-    print(f"\n📡 Streaming:")
+    print("📡 Streaming:")
     print(f"""curl -X POST "{server_url}/v1/chat/completions" \\
   -H "Content-Type: application/json" \\
   -d '{{"model":"modal-rag","messages":[{{"role":"user","content":"What is Modal?"}}],"stream":true}}' \\
