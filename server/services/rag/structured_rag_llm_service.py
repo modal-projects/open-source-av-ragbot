@@ -1,5 +1,6 @@
 import json
 import enum
+from abc import ABC, abstractmethod
 from typing import Optional, List
 
 from openai import AsyncStream
@@ -26,7 +27,7 @@ class ParseState(enum.Enum):
     COMPLETE = "complete"
 
 
-class StreamingJSONParser:
+class StreamingJSONParser(ABC):
     def __init__(self):
         self.reset()
     
@@ -52,12 +53,12 @@ class StreamingJSONParser:
         self.code_blocks_complete = False
         self.links_complete = False
     
-    async def process_chunk(self, content: str, handler) -> None:
+    async def process_chunk(self, content: str) -> None:
         """Process a chunk of streaming content."""
         for char in content:
-            await self._process_char(char, handler)
+            await self._process_char(char)
     
-    async def _process_char(self, char: str, handler) -> None:
+    async def _process_char(self, char: str) -> None:
         """Process a single character."""
         
         # Handle string escaping
@@ -67,7 +68,7 @@ class StreamingJSONParser:
             
             # If we're streaming spoke_response, send the escaped character
             if self.spoke_response_streaming and self.current_field == "spoke_response":
-                await handler.handle_spoke_response_chunk(char)
+                await self.handle_spoke_response_chunk(char)
             
             return
         
@@ -77,7 +78,7 @@ class StreamingJSONParser:
             
             # If we're streaming spoke_response, send the backslash
             if self.spoke_response_streaming and self.current_field == "spoke_response":
-                await handler.handle_spoke_response_chunk(char)
+                await self.handle_spoke_response_chunk(char)
             
             return
         
@@ -129,14 +130,14 @@ class StreamingJSONParser:
         elif self.state == ParseState.IN_STRING_VALUE:
             if char == '"' and not self.escape_next:
                 self.in_string = False
-                await self._handle_string_value_complete(handler)
+                await self._handle_string_value_complete()
                 self.state = ParseState.WAITING_FOR_COMMA_OR_END
             else:
                 self.current_value += char
                 
                 # Stream spoke_response content as it comes in
                 if self.spoke_response_streaming and self.current_field == "spoke_response":
-                    await handler.handle_spoke_response_chunk(char)
+                    await self.handle_spoke_response_chunk(char)
         
         elif self.state == ParseState.IN_ARRAY_VALUE:
             self.current_value += char
@@ -148,7 +149,7 @@ class StreamingJSONParser:
                 
                 if self.bracket_depth == 0:
                     # Array is complete
-                    await self._handle_array_value_complete(handler)
+                    await self._handle_array_value_complete()
                     self.state = ParseState.WAITING_FOR_COMMA_OR_END
         
         elif self.state == ParseState.WAITING_FOR_COMMA_OR_END:
@@ -158,19 +159,19 @@ class StreamingJSONParser:
                 self.brace_depth -= 1
                 if self.brace_depth == 0:
                     self.state = ParseState.COMPLETE
-                    await self._handle_parsing_complete(handler)
+                    await self._handle_parsing_complete()
             elif char.isspace():
                 pass  # Skip whitespace
     
-    async def _handle_string_value_complete(self, handler):
+    async def _handle_string_value_complete(self):
         """Handle completion of a string value."""
         if self.current_field == "spoke_response":
             self.spoke_response_buffer = self.current_value
             self.spoke_response_streaming = False
             self.spoke_response_complete = True
-            await handler.handle_spoke_response_complete(self.spoke_response_buffer)
+            await self.handle_spoke_response_complete(self.spoke_response_buffer)
     
-    async def _handle_array_value_complete(self, handler):
+    async def _handle_array_value_complete(self):
         """Handle completion of an array value."""
         try:
             # Parse the JSON array
@@ -179,17 +180,89 @@ class StreamingJSONParser:
             if self.current_field == "code_blocks":
                 self.code_blocks_buffer = array_data
                 self.code_blocks_complete = True
-                await handler.handle_code_blocks_complete(self.code_blocks_buffer)
+                await self.handle_code_blocks_complete(self.code_blocks_buffer)
             elif self.current_field == "links":
                 self.links_buffer = array_data
                 self.links_complete = True
-                await handler.handle_links_complete(self.links_buffer)
+                await self.handle_links_complete(self.links_buffer)
         except json.JSONDecodeError as e:
             print(f"Error parsing array for field {self.current_field}: {e}")
     
-    async def _handle_parsing_complete(self, handler):
+    async def _handle_parsing_complete(self):
         """Handle completion of the entire JSON object."""
-        await handler.handle_parsing_complete()
+        await self.handle_parsing_complete()
+
+    # Abstract handler methods to be implemented by subclasses
+    @abstractmethod
+    async def handle_spoke_response_chunk(self, chunk: str):
+        """Handle a chunk of the spoke_response as it streams in."""
+        pass
+    
+    @abstractmethod
+    async def handle_spoke_response_complete(self, complete_response: str):
+        """Handle completion of the spoke_response field."""
+        pass
+    
+    @abstractmethod
+    async def handle_code_blocks_complete(self, code_blocks: List[str]):
+        """Handle completion of the code_blocks array."""
+        pass
+    
+    @abstractmethod
+    async def handle_links_complete(self, links: List[str]):
+        """Handle completion of the links array."""
+        pass
+    
+    @abstractmethod
+    async def handle_parsing_complete(self):
+        """Handle completion of the entire JSON parsing."""
+        pass
+
+
+class ModalRagStreamingJSONParser(StreamingJSONParser):
+    """Concrete implementation of StreamingJSONParser for Modal RAG responses."""
+    
+    def __init__(self, service):
+        """Initialize with a reference to the service that owns this parser."""
+        super().__init__()
+        self.service = service
+    
+    async def handle_spoke_response_chunk(self, chunk: str):
+        """Handle a chunk of the spoke_response as it streams in."""
+        # Stream the text immediately for TTS
+        await self.service.push_frame(LLMTextFrame(chunk))
+    
+    async def handle_spoke_response_complete(self, complete_response: str):
+        """Handle completion of the spoke_response field."""
+        # TODO: Implement any final processing for the complete spoke_response
+        # This is called when the entire spoke_response field has been received
+        pass
+    
+    async def handle_code_blocks_complete(self, code_blocks: List[str]):
+        """Handle completion of the code_blocks array."""
+        # Send code blocks as structured data
+        await self.service.push_frame(RTVIServerMessageFrame(
+            data={
+                "type": "code_blocks",
+                "payload": code_blocks
+            }
+        ))
+    
+    async def handle_links_complete(self, links: List[str]):
+        """Handle completion of the links array."""
+        # Send links as structured data
+        await self.service.push_frame(RTVIServerMessageFrame(
+            data={
+                "type": "links",
+                "payload": links
+            }
+        ))
+    
+    async def handle_parsing_complete(self):
+        """Handle completion of the entire JSON parsing."""
+        # TODO: Implement any final cleanup or processing logic here
+        # This is called when the entire JSON object has been parsed
+        pass
 
 
 class StructuredRAGLLMService(OpenAILLMService):
@@ -197,7 +270,9 @@ class StructuredRAGLLMService(OpenAILLMService):
         if not kwargs.get("api_key"):
             kwargs["api_key"] = "super-secret-key"
         super().__init__(*args, **kwargs)
-        self.json_parser = StreamingJSONParser()
+        
+        # Create the JSON parser instance
+        self.json_parser = ModalRagStreamingJSONParser(self)
 
     @traced_llm
     async def _process_context(self, context: OpenAILLMContext):
@@ -265,7 +340,7 @@ class StructuredRAGLLMService(OpenAILLMService):
                     arguments += tool_call.function.arguments
             elif chunk.choices[0].delta.content:
                 # Process the content through our streaming JSON parser
-                await self.json_parser.process_chunk(chunk.choices[0].delta.content, self)
+                await self.json_parser.process_chunk(chunk.choices[0].delta.content)
 
             # When gpt-4o-audio / gpt-4o-mini-audio is used for llm or stt+llm
             # we need to get LLMTextFrame for the transcript
@@ -300,44 +375,3 @@ class StructuredRAGLLMService(OpenAILLMService):
                 )
 
             await self.run_function_calls(function_calls)
-
-    # Handler methods for the streaming parser - implement your logic here
-    async def handle_spoke_response_chunk(self, chunk: str):
-        """Handle a chunk of the spoke_response as it streams in."""
-        # TODO: Implement your streaming spoke_response logic here
-        # This is called for each character/chunk of the spoke_response field
-        await self.push_frame(LLMTextFrame(chunk))
-    
-    async def handle_spoke_response_complete(self, complete_response: str):
-        """Handle completion of the spoke_response field."""
-        # TODO: Implement any final processing for the complete spoke_response
-        # This is called when the entire spoke_response field has been received
-        pass
-    
-    async def handle_code_blocks_complete(self, code_blocks: List[str]):
-        """Handle completion of the code_blocks array."""
-        # TODO: Implement your code_blocks handling logic here
-        # This is called when the entire code_blocks array has been received
-        await self.push_frame(RTVIServerMessageFrame(
-            data={
-                "type": "code_blocks",
-                "payload": code_blocks
-            }
-        ))
-    
-    async def handle_links_complete(self, links: List[str]):
-        """Handle completion of the links array."""
-        # TODO: Implement your links handling logic here
-        # This is called when the entire links array has been received
-        await self.push_frame(RTVIServerMessageFrame(
-            data={
-                "type": "links",
-                "payload": links
-            }
-        ))
-    
-    async def handle_parsing_complete(self):
-        """Handle completion of the entire JSON parsing."""
-        # TODO: Implement any final cleanup or processing logic here
-        # This is called when the entire JSON object has been parsed
-        pass

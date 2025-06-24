@@ -171,6 +171,7 @@ _MAX_CONCURRENT_INPUTS = 3
     gpu="H100",
     image=vllm_rag_image,
     timeout=10 * 60,
+    min_containers=1,
 )
 @modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
 class VLLMRAGServer:

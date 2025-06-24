@@ -131,14 +131,10 @@ class ChatbotClient {
     );
     const RTVIConfig = {
       params: {
-        // REPLACE WITH YOUR MODAL URL ENDPOINT
         baseUrl:
           'https://modal-labs-shababo-dev--moe-and-dal-ragbot-bot-server.modal.run',
         endpoints: {
           connect: '/offer',
-        },
-        requestData: {
-          bot_name: 'gemini',
         },
       },
       transport: transport,
