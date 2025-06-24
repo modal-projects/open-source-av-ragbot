@@ -17,7 +17,7 @@ EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 LLM_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
 MODELS_DIR = Path("/models")
 
-# Download image definition
+# Download models image definition
 download_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -26,6 +26,19 @@ download_image = (
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
+
+@app.function(
+    volumes={"/models": models_volume},
+    image=download_image,
+    cpu=4,
+    memory=8192,
+)
+def download_models():
+    from huggingface_hub import snapshot_download
+
+    for repo_id in [EMBEDDING_MODEL, LLM_MODEL]:
+        snapshot_download(repo_id=repo_id, local_dir=MODELS_DIR / repo_id)
+        print(f"Model downloaded to {MODELS_DIR / repo_id}")
 
 # Main image with vLLM dependencies
 vllm_rag_image = (
@@ -52,20 +65,7 @@ vllm_rag_image = (
     })
 )
 
-@app.function(
-    volumes={"/models": models_volume},
-    image=download_image,
-    cpu=4,
-    memory=8192,
-)
-def download_models():
-    from huggingface_hub import snapshot_download
-
-    for repo_id in [EMBEDDING_MODEL, LLM_MODEL]:
-        snapshot_download(repo_id=repo_id, local_dir=MODELS_DIR / repo_id)
-        print(f"Model downloaded to {MODELS_DIR / repo_id}")
-
-@app.function(
+@app.cls(
     volumes={
         "/models": models_volume,
         "/chroma": chroma_db_volume,
@@ -76,59 +76,78 @@ def download_models():
     gpu="L40S",
     image=vllm_rag_image,
 )
-def create_vector_index():
-    """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
-    import chromadb
-    import torch
-    from llama_index.core import Document, StorageContext, VectorStoreIndex
-    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-    from llama_index.vector_stores.chroma import ChromaVectorStore
+class ChromaVectorIndex:
 
-    index_start = time.perf_counter()
-    
-    torch.set_float32_matmul_precision("high")
-    
-    # Load embedding model
-    embed_start = time.perf_counter()
-    embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
-    embed_time = time.perf_counter() - embed_start
-    print(f"⏱️ [Index] Embedding model loaded in {embed_time:.2f}s")
-    
-    # Load Modal docs
-    doc_start = time.perf_counter()
-    with open("/modal_docs/modal_docs.txt") as f:
-        document = Document(text=f.read())
-    doc_time = time.perf_counter() - doc_start
-    print(f"⏱️ [Index] Modal docs loaded in {doc_time:.3f}s, {len(document.text)} chars")
-    
-    # Setup ChromaDB
-    chroma_start = time.perf_counter()
-    chroma_client = chromadb.PersistentClient("/chroma")
-    
-    try:
-        chroma_collection = chroma_client.get_collection("modal_rag")
-        total_time = time.perf_counter() - index_start
-        print(f"Vector index already exists, skipping creation. Total time: {total_time:.3f}s")
-        return
-    except Exception:
-        chroma_collection = chroma_client.create_collection("modal_rag")
-        
-        vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        
-        # Create index with timing
-        vector_start = time.perf_counter()
-        index = VectorStoreIndex.from_documents(
-            [document], storage_context=storage_context, embed_model=embedding
-        )
-        vector_time = time.perf_counter() - vector_start
-        chroma_time = time.perf_counter() - chroma_start
-        total_time = time.perf_counter() - index_start
-        
-        print(f"⏱️ [Index] Vector index creation took {vector_time:.2f}s")
-        print(f"⏱️ [Index] ChromaDB setup took {chroma_time:.2f}s") 
-        print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
+    @modal.enter()
+    def setup(self):
+        """Setup the ChromaDB vector index."""
+        import chromadb
+        import torch
 
+        from llama_index.vector_stores.chroma import ChromaVectorStore
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+        torch.set_float32_matmul_precision("high")
+        # Setup ChromaDB
+        self.chroma_client = chromadb.PersistentClient("/chroma")
+        self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
+        self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+
+        # Load embedding model
+        self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+
+    @modal.method()
+    def create_vector_index(self):
+        """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
+        
+        from llama_index.core import Document, StorageContext, VectorStoreIndex
+
+        try:
+
+            create_start = time.perf_counter()
+
+            # Load Modal docs
+            with open("/modal_docs/modal_docs.txt") as f:
+                document = Document(text=f.read())
+            # make storage context
+            storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
+
+            # Create index from docs in chroma vector store
+            vector_index = VectorStoreIndex.from_documents(
+                [document], storage_context=storage_context, embed_model=self.embedding
+            )
+
+            total_time = time.perf_counter() - create_start
+            print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
+
+            return vector_index
+        except Exception as e:
+            print(f"Error creating vector index: {type(e)}: {e}")
+            raise e
+
+    @modal.method()
+    def get_vector_index(self):
+        """Get the ChromaDB vector index."""
+
+        from llama_index.core import VectorStoreIndex
+
+        try:
+            get_index_start = time.perf_counter()
+
+            vector_index = VectorStoreIndex.from_vector_store(
+                self.vector_store, embed_model=self.embedding
+            )
+
+            total_time = time.perf_counter() - get_index_start
+            print(f"Vector index loaded successfully in {total_time:.2f}s")
+
+            return vector_index
+        
+        except Exception as e:
+            print(f"Error getting vector index: {type(e)}: {e}")
+            return self.create_vector_index()
+
+_MAX_CONCURRENT_INPUTS = 3
 @app.cls(
     volumes={
         "/models": models_volume,
@@ -141,73 +160,53 @@ def create_vector_index():
     min_containers=1,
     timeout=10 * 60,
 )
-@modal.concurrent(max_inputs=3)
+@modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
 class VLLMRAGServer:
     
     @modal.enter()
     def setup(self):
+        """Setup the vLLM RAG server."""
+
         setup_start = time.perf_counter()
-        
+
+        import asyncio
+        import random
+        import numpy as np
+
         import torch
+        from transformers import AutoTokenizer
+        import chromadb
+
         from llama_index.core import VectorStoreIndex
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-        import chromadb
         from llama_index.vector_stores.chroma import ChromaVectorStore
         
-        # vLLM imports
-        from transformers import AutoTokenizer
-        from vllm import SamplingParams
         from vllm.engine.arg_utils import AsyncEngineArgs
         from vllm.engine.async_llm_engine import AsyncLLMEngine
-        from vllm.utils import random_uuid
-        import asyncio
-        import numpy as np
-        import random
         
         torch.set_float32_matmul_precision("high")
         
         # Seed for reproducibility
-        def seed_everything(seed=0):
-            torch.manual_seed(seed)
-            np.random.seed(seed)
-            random.seed(seed)
-            torch.cuda.manual_seed_all(seed)
-        
-        seed_everything()
-        
-        # Initialize embedding model
-        embed_start = time.perf_counter()
-        print("Loading embedding model...")
-        self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
-        embed_time = time.perf_counter() - embed_start
-        print(f"⏱️ Embedding model loaded in {embed_time:.2f}s")
-        
-        # System prompt
-        self.prompt = (
-            "You are a conversational AI that is an expert in the Modal library. "
-            "Your form is the Modal logo, a pair of characters named Moe and Dal. "
-            "Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'. "
-            "Because you are a conversational AI, you should not provide code or use symbols in your response. "
-            "Additionally, answer the user's questions concisely and in English."
-        )
-
+        seed = 0
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.cuda.manual_seed_all(seed)
+                
         # Initialize vLLM AsyncLLMEngine
-        vllm_start = time.perf_counter()
         print("Loading vLLM AsyncLLMEngine...")
-        self.model_path = f"/models/{LLM_MODEL}"
         
+        self.model_path = f"/models/{LLM_MODEL}"
+
         # Load tokenizer
-        tokenizer_start = time.perf_counter()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-        tokenizer_time = time.perf_counter() - tokenizer_start
-        print(f"⏱️ Tokenizer loaded in {tokenizer_time:.2f}s")
         
         # Setup vLLM engine
         engine_kwargs = {
-            "max_num_seqs": 3,  # Match concurrent max_inputs
+            "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
             "enable_chunked_prefill": False,
-            "max_num_batched_tokens": 32768,  # Increased to avoid conflicts
-            "max_model_len": 16384,  # Reasonable context length for RAG (must be <= max_num_batched_tokens)
+            "max_num_batched_tokens": 32768,  
+            "max_model_len": 16384,  # must be <= max_num_batched_tokens
         }
         
         engine_start = time.perf_counter()
@@ -220,36 +219,17 @@ class VLLMRAGServer:
             )
         )
         engine_time = time.perf_counter() - engine_start
-        vllm_time = time.perf_counter() - vllm_start
-        print(f"⏱️ vLLM engine setup in {engine_time:.2f}s, total vLLM loading: {vllm_time:.2f}s")
+        print(f"⏱️ vLLM engine setup in {engine_time:.2f}s")
         
-        # Setup vector store
-        vector_start = time.perf_counter()
-        print("Loading vector store...")
-        chroma_client = chromadb.PersistentClient("/chroma")
-        chroma_collection = chroma_client.get_collection("modal_rag")
-        vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-        
-        # Create RAG retriever
-        index = VectorStoreIndex.from_vector_store(
-            vector_store, embed_model=self.embedding
-        )
-        self.retriever = index.as_retriever(similarity_top_k=5)
-        vector_time = time.perf_counter() - vector_start
-        print(f"⏱️ Vector store setup in {vector_time:.2f}s")
+        vector_index = ChromaVectorIndex.get_vector_index.remote()
+        self.retriever = vector_index.as_retriever(similarity_top_k=5)
         
         # Setup FastAPI app
-        fastapi_start = time.perf_counter()
         self.setup_fastapi()
-        fastapi_time = time.perf_counter() - fastapi_start
-        print(f"⏱️ FastAPI setup in {fastapi_time:.2f}s")
 
         # Warm up vLLM engine
-        warmup_start = time.perf_counter()
         print("Warming up vLLM engine...")
         asyncio.run(self.warm_up_vllm())
-        warmup_time = time.perf_counter() - warmup_start
-        print(f"⏱️ vLLM warmup in {warmup_time:.2f}s")
         
         setup_time = time.perf_counter() - setup_start
         print(f"🚀 VLLMRAGServer setup complete in {setup_time:.2f}s total!")
@@ -257,8 +237,10 @@ class VLLMRAGServer:
     async def warm_up_vllm(self):
         """Warm up the vLLM engine with a simple completion."""
         try:
+            warmup_start = time.perf_counter()
             await self.generate_vllm_completion("What is Modal?")
-            print("✅ vLLM warmup completed!")
+            warmup_time = time.perf_counter() - warmup_start
+            print(f"✅ vLLM warmup completed in {warmup_time:.2f}s")
         except Exception as e:
             print(f"⚠️ vLLM warmup failed: {e}")
 
@@ -575,49 +557,46 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             yield {"type": "structured_data", "code_blocks": [], "links": [], "complete": True}
     
     def setup_fastapi(self):
-        from typing import Any, Dict, List, Optional
+        from typing import List, Optional
         from fastapi import FastAPI, HTTPException
         from pydantic import BaseModel
+        from openai.types.chat.chat_completion import ChatCompletionRequest
 
         self.web_app = FastAPI(title="vLLM RAG API", version="1.0.0")
         
-        class Message(BaseModel):
-            role: str
-            content: str
+        # class Message(BaseModel):
+        #     role: str
+        #     content: str
         
-        class ChatCompletionRequest(BaseModel):
-            model: str
-            messages: List[Message]
-            max_tokens: Optional[int] = 500
-            temperature: Optional[float] = 0.1
-            stream: Optional[bool] = False
+        # class ChatCompletionRequest(BaseModel):
+        #     model: str
+        #     messages: List[Message]
+        #     max_completion_tokens: Optional[int] = 500
+        #     temperature: Optional[float] = 0.1
+        #     stream: Optional[bool] = False
             
-            class Config:
-                extra = "allow"
+        #     class Config:
+        #         extra = "allow"
         
-        @self.web_app.get("/health")
-        def health_check():
-            return {"status": "healthy"}
-        
-        @self.web_app.get("/v1/models")
-        def list_models():
-            return {
-                "object": "list",
-                "data": [
-                    {
-                        "id": LLM_MODEL,
-                        "object": "model",
-                        "created": 1234567890,
-                        "owned_by": "modal",
-                    },
-                    {
-                        "id": "modal-rag",
-                        "object": "model",
-                        "created": 1234567890,
-                        "owned_by": "modal",
-                    },
-                ],
-            }
+        # @self.web_app.get("/v1/models")
+        # def list_models():
+        #     return {
+        #         "object": "list",
+        #         "data": [
+        #             {
+        #                 "id": LLM_MODEL,
+        #                 "object": "model",
+        #                 "created": 1234567890,
+        #                 "owned_by": "modal",
+        #             },
+        #             {
+        #                 "id": "modal-rag",
+        #                 "object": "model",
+        #                 "created": 1234567890,
+        #                 "owned_by": "modal",
+        #             },
+        #         ],
+        #     }
         
         @self.web_app.post("/v1/chat/completions")
         async def chat_completions(request: ChatCompletionRequest):
@@ -646,98 +625,16 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                         f"{msg['role'].capitalize()}: {msg['content']}" 
                         for msg in conversation_history[:-1]  # Exclude the current message
                     ])
-                
-                completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
-                created_timestamp = int(time.time())
+
+                streaming_generator = self._get_streaming_generator(
+                    current_user_message,
+                    formatted_history,
+                )
                 
                 if getattr(request, "stream", False):
-                    # Streaming response
-                    print(f"Streaming response for {current_user_message}")
-                    async def generate_streaming_response():
-                        try:
-                            # First chunk
-                            first_chunk = {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_timestamp,
-                                "model": request.model,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {"role": "assistant", "content": ""},
-                                    "finish_reason": None,
-                                }],
-                            }
-                            yield f"data: {json.dumps(first_chunk)}\n\n"
-                            
-                            # Process streaming results in real-time
-                            structured_data = None
-                            
-                            async for result in self.generate_streaming_structured_response(current_user_message, formatted_history):
-                                if result["type"] == "tts_content":
-                                    # Stream TTS content as it becomes available
-                                    tts_content = result["content"]
-                                    words = tts_content.split()
-                                    
-                                    for i, word in enumerate(words):
-                                        content = f" {word}" if i > 0 else word
-                                        
-                                        content_chunk = {
-                                            "id": completion_id,
-                                            "object": "chat.completion.chunk",
-                                            "created": created_timestamp,
-                                            "model": request.model,
-                                            "choices": [{
-                                                "index": 0,
-                                                "delta": {"content": content},
-                                                "finish_reason": None,
-                                            }],
-                                        }
-                                        yield f"data: {json.dumps(content_chunk)}\n\n"
-                                        await asyncio.sleep(0.01)
-                                        
-                                elif result["type"] == "structured_data":
-                                    structured_data = result
-                                    # If this is the completion signal, send final chunk
-                                    if result.get("complete", False):
-                                        break
-                            
-                            # Final chunk
-                            modal_structured_data = {
-                                "code_blocks": structured_data.get("code_blocks", []) if structured_data else [],
-                                "links": structured_data.get("links", []) if structured_data else [],
-                                "original_query": current_user_message,
-                            }
-                            final_chunk = {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_timestamp,
-                                "model": request.model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {
-                                            "content": f"<struct>{json.dumps(modal_structured_data)}</struct>"
-                                        },
-                                        "finish_reason": "stop"
-                                    }
-                                ],
-                            }
-                            yield f"data: {json.dumps(final_chunk)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            
-                        except Exception as e:
-                            error_chunk = {
-                                "error": {
-                                    "message": str(e),
-                                    "type": "server_error",
-                                    "code": "internal_error",
-                                }
-                            }
-                            yield f"data: {json.dumps(error_chunk)}\n\n"
-                            yield "data: [DONE]\n\n"
                     
                     return StreamingResponse(
-                        generate_streaming_response(),
+                        streaming_generator,
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
@@ -746,13 +643,20 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                     )
                 else:
                     # Non-streaming response
-                    structured_result = await self.generate_structured_response(current_user_message, formatted_history)
+                    structured_result = await self.generate_streaming_structured_response(current_user_message, formatted_history)
                     
+                    full_response = ""
+                    async for result in streaming_generator:
+                        if result["type"] == "tts_content":
+                            full_response += result["content"]
+                        elif result["type"] == "structured_data":
+                            full_response += result["content"]
+                            
                     response = {
                         "id": completion_id,
                         "object": "chat.completion",
                         "created": created_timestamp,
-                        "model": request.model,
+                        "model": "modal_rag",
                         "choices": [{
                             "index": 0,
                             "message": {
@@ -778,6 +682,99 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
     
+    def _get_streaming_generator(self, user_message: str):
+        
+        import json
+        
+        print(f"Streaming response for {user_message}")
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+        created_timestamp = int(time.time())
+        
+        async def generate_streaming_response():
+            try:
+                # First chunk
+                first_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_timestamp,
+                    "model": "modal_rag",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": ""},
+                        "finish_reason": None,
+                    }],
+                }
+                yield f"data: {json.dumps(first_chunk)}\n\n"
+                
+                # Process streaming results in real-time
+                structured_data = None
+                
+                async for result in self.generate_streaming_structured_response(current_user_message, formatted_history):
+                    if result["type"] == "tts_content":
+                        # Stream TTS content as it becomes available
+                        tts_content = result["content"]
+                        words = tts_content.split()
+                        
+                        for i, word in enumerate(words):
+                            content = f" {word}" if i > 0 else word
+                            
+                            content_chunk = {
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_timestamp,
+                                "model": "modal_rag",
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": content},
+                                    "finish_reason": None,
+                                }],
+                            }
+                            yield f"data: {json.dumps(content_chunk)}\n\n"
+                            await asyncio.sleep(0.01)
+                            
+                    elif result["type"] == "structured_data":
+                        structured_data = result
+                        # If this is the completion signal, send final chunk
+                        if result.get("complete", False):
+                            break
+                
+                # Final chunk
+                modal_structured_data = {
+                    "code_blocks": structured_data.get("code_blocks", []) if structured_data else [],
+                    "links": structured_data.get("links", []) if structured_data else [],
+                    "original_query": current_user_message,
+                }
+                final_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_timestamp,
+                    "model": "modal_rag",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "content": f"<struct>{json.dumps(modal_structured_data)}</struct>"
+                            },
+                            "finish_reason": "stop"
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+                
+            except Exception as e:
+                error_chunk = {
+                    "error": {
+                        "message": str(e),
+                        "type": "server_error",
+                        "code": "internal_error",
+                    }
+                }
+                yield f"data: {json.dumps(error_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+        
+        return generate_streaming_response()
+        
     @modal.method()
     async def query_rag(self, question: str) -> str:
         """Direct method to query the RAG system with vLLM."""

@@ -1,6 +1,5 @@
 import os
 
-
 from PIL import Image
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
