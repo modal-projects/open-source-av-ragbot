@@ -146,3 +146,14 @@ class Chatterbox:
             media_type="audio/wav",
             headers={"Content-Disposition": 'attachment; filename="output.wav"'},
         )
+
+def get_chatterbox_server_url():
+    try:
+        return Chatterbox().tts.get_web_url()
+    except Exception as e:
+        try:
+            ChatterboxCls = modal.Cls.from_name("chatterbox-tts", "Chatterbox")
+            return ChatterboxCls().tts.get_web_url()
+        except Exception as e:
+            print(f"❌ Error getting Chatterbox server URL: {e}")
+            return None

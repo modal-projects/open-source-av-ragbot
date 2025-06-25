@@ -9,10 +9,14 @@ from pipecat.metrics.metrics import LLMTokenUsage
 
 from server.services.modal_rag.parser import ModalRagStreamingJsonParser
 
+
 class ModalRagLLMService(OpenAILLMService):
     def __init__(self, *args, **kwargs):
+        from server.services.modal_rag.vllm_rag_server import get_rag_server_url
         if not kwargs.get("api_key"):
             kwargs["api_key"] = "super-secret-key"
+        if not kwargs.get("base_url"):
+            kwargs["base_url"] = get_rag_server_url() + "/v1"
         super().__init__(*args, **kwargs)
         
         # Create the JSON parser instance

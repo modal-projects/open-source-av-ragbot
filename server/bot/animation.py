@@ -30,7 +30,7 @@ def get_frames(substring_match: str):
     return SpriteFrame(sprites)
 
 
-class TalkingAnimation(FrameProcessor):
+class MoeDalBotAnimation(FrameProcessor):
     """Manages the bot's visual animation states.
 
     Switches between static (listening), thinking, and talking states based on

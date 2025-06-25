@@ -188,11 +188,6 @@ class VLLMRAGServer:
 
         import torch
         from transformers import AutoTokenizer
-        import chromadb
-
-        # from llama_index.core import VectorStoreIndex
-        # from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-        # from llama_index.vector_stores.chroma import ChromaVectorStore
         
         from vllm.engine.arg_utils import AsyncEngineArgs
         from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -659,6 +654,17 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
     """
     return system_prompt
 
+def get_rag_server_url():
+    try:  
+        return VLLMRAGServer().fastapi_app.get_web_url()
+    except Exception as e:
+        try:
+            VLLMRAGServerCls = modal.Cls.from_name("modal-rag-openai-vllm", "VLLMRAGServer")
+            return VLLMRAGServerCls().fastapi_app.get_web_url()
+        except Exception as e:
+            print(f"❌ Error getting RAG server URL: {e}")
+            return None
+
 @app.local_entrypoint()
 def test_service():
     """Test both streaming and non-streaming vLLM RAG API."""
@@ -668,16 +674,13 @@ def test_service():
     # Setup the system first
     ChromaVectorIndex().setup_rag_system.remote()
     
-    # Get the server URL
-    server_url = VLLMRAGServer().fastapi_app.get_web_url()
-    print(f"Testing vLLM RAG Streaming API at {server_url}")
-    
-    # Wait for server to be ready
+    rag_server_url = get_rag_server_url()
+    print(f"Testing vLLM RAG Streaming API at {rag_server_url}")    
     print("Waiting for server to be ready...")
     max_retries = 30
     for i in range(max_retries):
         try:
-            response = requests.get(f"{server_url}/health", timeout=10)
+            response = requests.get(f"{rag_server_url}/health", timeout=10)
             if response.status_code == 200:
                 print("✅ Server is ready!")
                 break
@@ -703,14 +706,14 @@ def test_service():
     }
     
     print(f"🔍 Question: {test_question}")
-    print(f"📄 Non-streaming response:")
+    print("📄 Non-streaming response:")
     print("-" * 70)
     
     try:
         start_time = time.perf_counter()
         
         response = requests.post(
-            f"{server_url}/v1/chat/completions",
+            f"{rag_server_url}/v1/chat/completions",
             json=payload_non_streaming,
             headers={"Content-Type": "application/json"},
             timeout=120,
@@ -775,7 +778,7 @@ def test_service():
         start_time = time.perf_counter()
         
         response = requests.post(
-            f"{server_url}/v1/chat/completions",
+            f"{rag_server_url}/v1/chat/completions",
             json=payload_streaming,
             headers={"Content-Type": "application/json"},
             stream=True,  # Enable streaming response
@@ -887,14 +890,14 @@ def test_service():
     print("    ├── delta: {content: 'incremental_text'}")
     print("    └── finish_reason: null (or 'stop' on final chunk)")
     
-    print(f"🌐 You can test the API manually at: {server_url}")
+    print(f"🌐 You can test the API manually at: {rag_server_url}")
     print("💡 Try these curl commands:")
     print("📄 Non-streaming:")
-    print(f"""curl -X POST "{server_url}/v1/chat/completions" \\
+    print(f"""curl -X POST "{rag_server_url}/v1/chat/completions" \\
   -H "Content-Type: application/json" \\
   -d '{{"model":"modal-rag","messages":[{{"role":"user","content":"What is Modal?"}}],"stream":false}}'""")
     print("📡 Streaming:")
-    print(f"""curl -X POST "{server_url}/v1/chat/completions" \\
+    print(f"""curl -X POST "{rag_server_url}/v1/chat/completions" \\
   -H "Content-Type: application/json" \\
   -d '{{"model":"modal-rag","messages":[{{"role":"user","content":"What is Modal?"}}],"stream":true}}' \\
   --no-buffer""") 

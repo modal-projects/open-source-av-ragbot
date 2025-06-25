@@ -27,18 +27,21 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
-from pipecat.services.openai.llm import OpenAILLMService
+
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.audio.turn.smart_turn.local_smart_turn import LocalSmartTurnAnalyzer
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
-from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.network.small_webrtc import SmallWebRTCTransport, SmallWebRTCConnection
-from server.bot.animation import TalkingAnimation, get_frames
+from server.bot.animation import MoeDalBotAnimation, get_frames
 
 from ..services.stt.parakeet_service import ParakeetSTTService
-from ..services.tts.chatterbox_service import ChatterboxTTSService
+
 from ..services.modal_rag.modal_rag_service import ModalRagLLMService
+from pipecat.services.openai.llm import OpenAILLMService
+
+from ..services.tts.chatterbox_service import ChatterboxTTSService
+from ..services.tts.text_aggregator import ModalRagTextAggregator
 
 try:
     logger.remove(0)
@@ -46,11 +49,6 @@ try:
 except ValueError:
     # Handle the case where logger is already initialized
     pass
-
-
-# REPLACE WITH YOUR MODAL URL ENDPOINT
-vllm_url = "https://modal-labs-shababo-dev--modal-rag-openai-vllm-vllmragser-cfa200.modal.run"
-chatterbox_url = "https://modal-labs-shababo-dev--chatterbox-tts-chatterbox-tts.modal.run"
 
 _AUDIO_INPUT_SAMPLE_RATE = 16000
 _AUDIO_OUTPUT_SAMPLE_RATE = 24000
@@ -100,9 +98,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         )
 
         # Initialize OpenAI API compatibleLLM service
-        llm = ModalRagLLMService(
+        rag = ModalRagLLMService(
             model="modal-rag",
-            base_url=f"{vllm_url}/v1",
             params=OpenAILLMService.InputParams(
                 extra = {
                     "stream": True,
@@ -120,33 +117,18 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         # Set up conversation context and management
         # The context_aggregator will automatically collect conversation context
         context = OpenAILLMContext(messages)
-        context_aggregator = llm.create_context_aggregator(context)
+        context_aggregator = rag.create_context_aggregator(context)
 
-        ta = TalkingAnimation()
-
-        markdown_filter = MarkdownTextFilter(
-            MarkdownTextFilter.InputParams(
-                filter_code=True,
-                filter_tables=True
-            )
-        )
+        ta = MoeDalBotAnimation()
 
         tts = ChatterboxTTSService(
             aiohttp_session=session,
-            base_url=chatterbox_url,
             sample_rate=24000,
-            text_filter=markdown_filter,
+            text_aggregator=ModalRagTextAggregator(),
         )
 
         # RTVI events for Pipecat client UI
         rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
-        @rtvi.event_handler("on_client_ready")
-        async def on_client_ready(rtvi):
-            logger.info("Pipecat client ready.")
-            await rtvi.set_bot_ready()
-            # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
 
         pipeline = Pipeline(
             [
@@ -154,7 +136,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 rtvi,
                 stt,
                 context_aggregator.user(),
-                llm,
+                rag,
                 tts,
                 ta,
                 transport.output(),
@@ -172,6 +154,14 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             observers=[RTVIObserver(rtvi)],
         )
 
+        @rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
+            logger.info("Pipecat client ready.")
+            await rtvi.set_bot_ready()
+            # Kick off the conversation
+            await task.queue_frames([context_aggregator.user().get_context_frame()])
+            await task.queue_frame(get_frames("thinking"))
+
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
             logger.info("Pipecat Client disconnected")
@@ -187,8 +177,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             logger.info("Pipecat Client closed")
             await task.cancel()
             logger.info("Pipeline task cancelled.")
-
-        await task.queue_frame(get_frames("thinking"))
 
         runner = PipelineRunner()
         await runner.run(task)
