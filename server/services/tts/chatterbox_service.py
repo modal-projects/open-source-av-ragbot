@@ -37,7 +37,6 @@ class ChatterboxTTSService(TTSService):
         
         from server.services.tts.chatterbox_tts import get_chatterbox_server_url
 
-        base_url = base_url or get_chatterbox_server_url()
         super().__init__(
             aggregate_sentences=True,
             push_text_frames=True,
@@ -46,7 +45,7 @@ class ChatterboxTTSService(TTSService):
             **kwargs,
         )
 
-        self._base_url = base_url
+        self._base_url = base_url or get_chatterbox_server_url()
         self._session = aiohttp_session
         self._started = False
 
@@ -68,11 +67,11 @@ class ChatterboxTTSService(TTSService):
 
     @traced_tts
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
-        """Generate speech from text using ElevenLabs streaming API with timestamps.
+        """Generate speech from text using Chatterbox TTS streaming API.
 
-        Makes a request to the ElevenLabs API to generate audio and timing data.
-        Tracks the duration of each utterance to ensure correct sequencing.
-        Includes previous text as context for better prosody continuity.
+        Makes a request to the Chatterbox Modal deployment to generate audio.
+        Streams audio chunks in WAV format and tracks utterance duration.
+        Handles WAV header removal for raw PCM audio streaming.
 
         Args:
             text: Text to convert to speech
@@ -80,7 +79,7 @@ class ChatterboxTTSService(TTSService):
         Yields:
             Audio and control frames
         """
-        logger.debug(f"{self}: Received TTS [{text}]")
+        logger.info(f"{self}: Received TTS [{text}]")
         
         params = {
             "prompt": text,
@@ -107,17 +106,13 @@ class ChatterboxTTSService(TTSService):
                     self._started = True
 
                 # Track the duration of this utterance based on the last character's end time
-                utterance_duration = 0
                 async for audio_chunk in response.content.iter_chunked(8192):
                     if audio_chunk:
                         if b'RIFF' in audio_chunk:
                             audio_chunk = audio_chunk[44:]
 
                         await self.stop_ttfb_metrics()
-                        utterance_duration += len(audio_chunk) / (self.sample_rate * 16 / 8)
                         yield TTSAudioRawFrame(audio_chunk, self.sample_rate, 1)
-
-
 
         except Exception as e:
             logger.error(f"Error in run_tts: {e}")

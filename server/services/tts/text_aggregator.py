@@ -75,17 +75,14 @@ def transform_function_calls(text: str) -> str:
                 first_part.islower() and 
                 len(first_part) <= 5 and 
                 '_' not in first_part and
-                not first_part in {'app', 'torch', 'utils', 'modal', 'api', 'http', 'json', 'math'}
+                first_part not in {'app', 'torch', 'utils', 'modal', 'api', 'http', 'json', 'math'}
             ):
                 # Likely an instance
-                call_type = "method"
                 readable_path = f"{parts[-1]} method"
             else:
                 # Likely a module/class like 'torch.cuda', 'app.function', 'utils.process'
-                call_type = "function"
                 readable_path = " dot ".join(parts) + " function"
         else:
-            call_type = "function"
             readable_path = function_path + " function"
         
         if not args_str:

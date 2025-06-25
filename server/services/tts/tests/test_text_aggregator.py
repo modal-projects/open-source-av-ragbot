@@ -2,12 +2,13 @@
 
 import asyncio
 import sys
-import os
 
-# Add the server directory to Python path so we can import our module
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'server'))
+# Add the project root to Python path so we can import our module
+from pathlib import Path
+project_root = Path(__file__).parent.parent.parent.parent.parent  # Go up to project root
+sys.path.insert(0, str(project_root))
 
-from services.tts.text_aggregator import (
+from server.services.tts.text_aggregator import (
     ModalRagTextAggregator,
     preprocess_text_for_speech,
     transform_decorators,
