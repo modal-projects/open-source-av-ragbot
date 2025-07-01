@@ -8,6 +8,7 @@ from pipecat.frames.frames import (
     Frame,
     LLMFullResponseEndFrame,
     StartFrame,
+    EndFrame,
     StartInterruptionFrame,
     TTSAudioRawFrame,
     TTSStartedFrame,
@@ -35,15 +36,15 @@ class ChatterboxTTSService(TTSService):
         **kwargs,
     ):
         
-        from server.services.tts.chatterbox_tts import get_chatterbox_server_url
-
         super().__init__(
             aggregate_sentences=True,
             push_text_frames=True,
-            push_stop_frames=True,
+            push_stop_frames=False,
             sample_rate=sample_rate,
             **kwargs,
         )
+        
+        from server.services.tts.chatterbox_tts import get_chatterbox_server_url
 
         self._base_url = base_url or get_chatterbox_server_url()
         self._session = aiohttp_session
@@ -52,10 +53,6 @@ class ChatterboxTTSService(TTSService):
     def can_generate_metrics(self) -> bool:
         """Indicate that this service can generate usage metrics."""
         return True
-
-    async def start(self, frame: StartFrame):
-        """Initialize the service upon receiving a StartFrame."""
-        await super().start(frame)
 
     async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         await super().push_frame(frame, direction)
@@ -118,5 +115,6 @@ class ChatterboxTTSService(TTSService):
             logger.error(f"Error in run_tts: {e}")
             yield ErrorFrame(error=str(e))
         finally:
+            self._started = False
             await self.stop_ttfb_metrics()
-            # Let the parent class handle TTSStoppedFrame
+            yield TTSStoppedFrame()

@@ -778,35 +778,40 @@ class ChatbotClient {
 
     const codeContainer = codeSection.querySelector('.code-blocks-container');
 
-    codeBlocks.forEach((code, index) => {
-      const codeBlockEl = document.createElement('div');
-      codeBlockEl.className = 'code-block';
-      codeBlockEl.innerHTML = `
-        <div class="code-block-header">
-          <span>Example ${index + 1}</span>
-          <button class="copy-btn" onclick="this.parentElement.parentElement.copyCode()">📋 Copy</button>
-        </div>
-        <pre><code>${this.escapeHtml(code)}</code></pre>
-      `;
+    // Create a single code block element for all code
+    const codeBlockEl = document.createElement('div');
+    codeBlockEl.className = 'code-block';
+    
+    // Combine all code blocks with separators
+    const combinedCode = codeBlocks.map((code, index) => {
+      return `// Example ${index + 1}\n${code}`;
+    }).join('\n\n');
+    
+    codeBlockEl.innerHTML = `
+      <div class="code-block-header">
+        <span>Code Examples (${codeBlocks.length})</span>
+        <button class="copy-btn" onclick="this.parentElement.parentElement.copyCode()">📋 Copy</button>
+      </div>
+      <pre><code>${this.escapeHtml(combinedCode)}</code></pre>
+    `;
 
-      // Add copy functionality
-      codeBlockEl.copyCode = () => {
-        navigator.clipboard.writeText(code).then(() => {
-          const copyBtn = codeBlockEl.querySelector('.copy-btn');
-          const originalText = copyBtn.textContent;
-          copyBtn.textContent = '✅ Copied!';
-          copyBtn.style.color = '#28a745';
-          setTimeout(() => {
-            copyBtn.textContent = originalText;
-            copyBtn.style.color = '';
-          }, 2000);
-        }).catch(err => {
-          console.error('Failed to copy code:', err);
-        });
-      };
+    // Add copy functionality for the combined code
+    codeBlockEl.copyCode = () => {
+      navigator.clipboard.writeText(combinedCode).then(() => {
+        const copyBtn = codeBlockEl.querySelector('.copy-btn');
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = '✅ Copied!';
+        copyBtn.style.color = '#28a745';
+        setTimeout(() => {
+          copyBtn.textContent = originalText;
+          copyBtn.style.color = '';
+        }, 2000);
+      }).catch(err => {
+        console.error('Failed to copy code:', err);
+      });
+    };
 
-      codeContainer.appendChild(codeBlockEl);
-    });
+    codeContainer.appendChild(codeBlockEl);
 
     extrasContainer.appendChild(codeSection);
     

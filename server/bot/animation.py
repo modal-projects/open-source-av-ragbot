@@ -51,7 +51,7 @@ class MoeDalBotAnimation(FrameProcessor):
             frame: The incoming frame to process
             direction: The direction of frame flow in the pipeline
         """
-        await super().process_frame(frame, direction)
+        
 
         # Switch to talking animation when bot starts speaking
         if isinstance(frame, BotStartedSpeakingFrame):
@@ -66,5 +66,6 @@ class MoeDalBotAnimation(FrameProcessor):
         elif isinstance(frame, UserStoppedSpeakingFrame):
             await self.push_frame(self._thinking_frames)
             self._is_talking = False
-
+        await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
+        
