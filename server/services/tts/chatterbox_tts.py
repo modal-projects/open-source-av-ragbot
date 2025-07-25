@@ -26,10 +26,20 @@ with image.imports():
 )
 @modal.concurrent(max_inputs=10)
 class Chatterbox:
-    @modal.enter()
+    @modal.enter(snap=True)
     def load(self):
         self.model = ChatterboxTTS.from_pretrained(device="cuda")
         self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_short_24000.wav"
+
+        print("🔥 Warming up the model...")
+        # warm up the model
+        self.model.generate_stream(
+            "Hello, how are you? We are Moe and Dal. We can help you learn more about Modal and developing with Modal. What can we help you with today?",
+            audio_prompt_path=self.audio_prompt_path,
+            chunk_size=25
+        )
+
+        print("✅ Model warmed up!")
     
     def _create_wav_header(self, sample_rate: int, channels: int, bits_per_sample: int, estimated_data_size: int) -> bytes:
         """Create a WAV file header for streaming. Much more efficient than using torchaudio.save for each chunk."""
