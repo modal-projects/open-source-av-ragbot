@@ -11042,11 +11042,6 @@ username to create a Modal
 
 .
 
-```
-REGISTRY_USERNAME=my-dockerhub-username
-REGISTRY_PASSWORD=***
-```
-
 Use this Secret with the
 [`modal.Image.from_registry`](/docs/reference/modal.Image#from_registry)
 
