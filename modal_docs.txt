@@ -11044,7 +11044,7 @@ username to create a Modal
 
 ```
 REGISTRY_USERNAME=my-dockerhub-username
-REGISTRY_PASSWORD=dckr_pat_TS012345aaa67890bbbb1234ccc
+REGISTRY_PASSWORD=***
 ```
 
 Use this Secret with the
