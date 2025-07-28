@@ -15,8 +15,7 @@ createRoot(document.getElementById("root")!).render(
         <ConsoleTemplate
           transportType="smallwebrtc"
           connectParams={{
-            connectionUrl:
-              "https://modal-labs-shababo-dev--moe-and-dal-ragbot-bot-server.modal.run/offer",
+            connectionUrl: "/offer",
           }}
           noUserVideo={true}
         />
