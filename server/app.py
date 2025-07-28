@@ -13,16 +13,18 @@ bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
     .apt_install("ffmpeg")
     .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]==0.0.71", 
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]==0.0.76",
     )
     .add_local_dir("server", remote_path="/root/server")
 )
 
-MINUTES = 60 # seconds in a minute
+MINUTES = 60  # seconds in a minute
+
+
 @app.function(
-    image=bot_image, 
-    gpu="L40S", 
-    timeout=30*MINUTES
+    image=bot_image,
+    gpu="L40S",
+    timeout=30 * MINUTES
 )
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
@@ -34,7 +36,10 @@ async def run_bot(d: modal.Dict):
         RuntimeError: If the bot pipeline fails to start or encounters an error.
     """
     from loguru import logger
-    from pipecat.transports.network.webrtc_connection import SmallWebRTCConnection, IceServer
+    from pipecat.transports.network.webrtc_connection import (
+        IceServer,
+        SmallWebRTCConnection,
+    )
 
     from .bot.moe_and_dal_bot import run_bot
 
@@ -57,7 +62,7 @@ async def run_bot(d: modal.Dict):
             logger.info("WebRTC connection to bot closed.")
 
         print("Starting bot process.")
-        
+
         answer = webrtc_connection.get_answer()
         await d.put.aio("answer", answer)
 
@@ -74,6 +79,7 @@ web_server_image = (
     .add_local_dir("server", remote_path="/root/server")
 )
 
+
 @app.function(image=web_server_image)
 @modal.concurrent(max_inputs=1)
 @modal.asgi_app()
@@ -88,7 +94,7 @@ def bot_server():
 
     # Initialize FastAPI app
     web_app = FastAPI()
-    
+
     # # # setup CORS
     web_app.add_middleware(
         CORSMiddleware,
@@ -114,7 +120,7 @@ def bot_server():
 
             run_bot.spawn(d)
 
-            while True: 
+            while True:
                 answer = await d.get.aio("answer")
                 if answer:
                     return answer
@@ -122,10 +128,12 @@ def bot_server():
 
     return web_app
 
-frontend_image = web_server_image.add_local_dir(  
+
+frontend_image = web_server_image.add_local_dir(
     Path(__file__).parent.parent / "client/dist",
     remote_path="/frontend",
 )
+
 
 @app.function(image=frontend_image)
 @modal.asgi_app()
@@ -136,9 +144,9 @@ def frontend_server():
     It is decorated to be used as a Modal ASGI app.
     """
     from fastapi import FastAPI
-    from fastapi.staticfiles import StaticFiles
     from fastapi.responses import HTMLResponse
-    
+    from fastapi.staticfiles import StaticFiles
+
     web_app = FastAPI()
 
     static_files = StaticFiles(directory="/frontend")
