@@ -10,7 +10,7 @@ app = modal.App("modal-rag-openai-vllm")
 # Volumes for caching models and vector store
 modal_docs_volume = modal.Volume.from_name("modal_docs", create_if_missing=True)
 models_volume = modal.Volume.from_name("models", create_if_missing=True)
-chroma_db_volume = modal.Volume.from_name("model_rag_chroma", create_if_missing=True)
+chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=True)
 
 # Model configuration
 EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
@@ -52,7 +52,7 @@ vllm_rag_image = (
     },
     cpu=8,
     memory=8192,
-    gpu="L40S",
+    gpu="H100",
     image=vllm_rag_image,
 )
 class ChromaVectorIndex:
@@ -95,13 +95,19 @@ class ChromaVectorIndex:
                 self.download_models()
 
             torch.set_float32_matmul_precision("high")
+            # Load embedding model
+            self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+
             # Setup ChromaDB
             self.chroma_client = chromadb.PersistentClient("/chroma")
             self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
             self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+            print(f"Chroma collection: {self.chroma_collection.count()}")
+            if self.chroma_collection.count() == 0:
+                self._create_vector_index()
+            
 
-            # Load embedding model
-            self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
+            
             self.is_setup = True
 
     def create_vector_index(self):
@@ -112,6 +118,10 @@ class ChromaVectorIndex:
         
         from llama_index.core import Document, StorageContext, VectorStoreIndex
 
+        from llama_index.core.node_parser import (
+            SemanticSplitterNodeParser,
+        )
+
         try:
 
             create_start = time.perf_counter()
@@ -119,15 +129,27 @@ class ChromaVectorIndex:
             # Load Modal docs
             with open("/modal_docs/modal_docs.txt") as f:
                 document = Document(text=f.read())
+
+            node_parser = SemanticSplitterNodeParser(
+                buffer_size=1, breakpoint_percentile_threshold=95, embed_model=self.embedding
+            )
+            nodes = node_parser.get_nodes_from_documents([document])
+            print(f"Created {len(nodes)} nodes")
+            print(nodes[0].text)
+
             # make storage context
             storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
 
             # Create index from docs in chroma vector store
-            vector_index = VectorStoreIndex.from_documents(
-                [document], storage_context=storage_context, embed_model=self.embedding
+            vector_index = VectorStoreIndex(
+                nodes, 
+                storage_context=storage_context, 
+                embed_model=self.embedding
             )
             # test retrieval
-            test_nodes = vector_index.as_retriever(similarity_top_k=10).retrieve("What GPUs can I use with Modal?")
+            test_nodes = vector_index.as_retriever(
+                similarity_top_k=10
+                ).retrieve("What GPUs can I use with Modal?")
             print(test_nodes)
 
             total_time = time.perf_counter() - create_start
@@ -143,6 +165,8 @@ class ChromaVectorIndex:
         """Get the ChromaDB vector index."""
 
         from llama_index.core import VectorStoreIndex
+
+        self.setup()
 
         try:
             get_index_start = time.perf_counter()
@@ -165,6 +189,7 @@ _MAX_CONCURRENT_INPUTS = 3
     volumes={
         "/models": models_volume,
         "/chroma": chroma_db_volume,
+        "/modal_docs": modal_docs_volume,
     },
     cpu=8,
     memory=32768,
@@ -209,6 +234,28 @@ class VLLMRAGServer:
         
         if not os.path.exists(self.model_path):
             ChromaVectorIndex().download_models()
+
+        # Setup vector index and retriever locally within this container
+        print("Setting up vector index and retriever...")
+        
+        try:
+
+            vector_index = ChromaVectorIndex().get_vector_index.local()
+            self.retriever = vector_index.as_retriever(similarity_top_k=10)
+            
+            # Test retrieval with a simple query to validate setup
+            try:
+                test_nodes = self.retriever.retrieve("Modal")
+                print(f"✅ Vector index and retriever setup complete - found {len(test_nodes)} test nodes")
+                if test_nodes:
+                    first_node_preview = test_nodes[0].text[:100] if test_nodes[0].text else "None"
+                    print(f"   First node preview: {first_node_preview}...")
+            except Exception as e:
+                print(f"⚠️ Test retrieval failed: {e}")
+                self.retriever = None
+        except Exception as e:
+            print(f"⚠️ Vector index setup failed: {e}")
+            self.retriever = None
         
         
 
@@ -235,27 +282,7 @@ class VLLMRAGServer:
         engine_time = time.perf_counter() - engine_start
         print(f"⏱️ vLLM engine setup in {engine_time:.2f}s")
         
-        # Setup vector index and retriever locally within this container
-        print("Setting up vector index and retriever...")
         
-        try:
-
-            vector_index = ChromaVectorIndex().get_vector_index.local()
-            self.retriever = vector_index.as_retriever(similarity_top_k=10)
-            
-            # Test retrieval with a simple query to validate setup
-            try:
-                test_nodes = self.retriever.retrieve("Modal")
-                print(f"✅ Vector index and retriever setup complete - found {len(test_nodes)} test nodes")
-                if test_nodes:
-                    first_node_preview = test_nodes[0].text[:100] if test_nodes[0].text else "None"
-                    print(f"   First node preview: {first_node_preview}...")
-            except Exception as e:
-                print(f"⚠️ Test retrieval failed: {e}")
-                self.retriever = None
-        except Exception as e:
-            print(f"⚠️ Vector index setup failed: {e}")
-            self.retriever = None
         
         # Setup FastAPI app
         self._setup_fastapi()
