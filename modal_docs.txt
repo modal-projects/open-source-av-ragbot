@@ -11030,22 +11030,7 @@ such as
 , and Docker
 Hub.
 
-Docker Hub (Private)
---------------------
 
-To pull container images from private Docker Hub repositories,
-[create an access token](https://docs.docker.com/security/for-developers/access-tokens/)
-
-with “Read-Only” permissions and use this token value and your Docker Hub
-username to create a Modal
-[Secret](/docs/guide/secrets)
-
-.
-
-Use this Secret with the
-[`modal.Image.from_registry`](/docs/reference/modal.Image#from_registry)
-
-method.
 
 Elastic Container Registry (ECR)
 --------------------------------
