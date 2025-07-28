@@ -266,8 +266,8 @@ class VLLMRAGServer:
         engine_kwargs = {
             "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
             "enable_chunked_prefill": False,
-            "max_num_batched_tokens": 32768,  
-            "max_model_len": 16384,  # must be <= max_num_batched_tokens
+            "max_num_batched_tokens": 16384,  
+            "max_model_len": 8192,  # must be <= max_num_batched_tokens
         }
         
         engine_start = time.perf_counter()
