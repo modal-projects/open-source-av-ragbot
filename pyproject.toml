@@ -13,6 +13,6 @@ dependencies = [
     "requests>=2.32.4",
     "tqdm>=4.66.0",
     "transformers==4.50.0",
-    "torch==2.5.1",
+    "torch==2.7.1",
     "unstructured>=0.10.0",
 ]
