@@ -4,7 +4,7 @@
 
 """Moe and Dal RAG Bot Implementation.
 
-This module implements a chatbot using a custom RAG (Retrieval-Augmented Generation) 
+This module implements a chatbot using a custom RAG (Retrieval-Augmented Generation)
 system with VLLM backend. It includes:
 - Real-time audio/video interaction through WebRTC
 - Animated robot avatar with talking animations
@@ -29,12 +29,11 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.audio.turn.smart_turn.local_smart_turn import LocalSmartTurnAnalyzer
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.network.small_webrtc import SmallWebRTCTransport, SmallWebRTCConnection
 from server.bot.animation import MoeDalBotAnimation, get_frames
-
+from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
 from ..services.stt.parakeet_service import ParakeetSTTService
 
 from ..services.modal_rag.modal_rag_service import ModalRagLLMService
@@ -53,6 +52,7 @@ except ValueError:
 _AUDIO_INPUT_SAMPLE_RATE = 16000
 _AUDIO_OUTPUT_SAMPLE_RATE = 24000
 _MOE_AND_DAL_FRAME_RATE = 12
+
 
 async def run_bot(webrtc_connection: SmallWebRTCConnection):
     """Main bot execution function.
@@ -78,8 +78,9 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(stop_secs=0.2)
             ),
-            turn_analyzer=LocalSmartTurnAnalyzer(
-                smart_turn_model_path=None, # required kwarg, default model from HF is None (should be Optional not required!)
+            turn_analyzer=LocalSmartTurnAnalyzerV2(
+                smart_turn_model_path=None,
+                # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
                     stop_secs=3.0,
                     pre_speech_ms=0.1,
@@ -89,10 +90,10 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         )
 
         transport = SmallWebRTCTransport(
-            webrtc_connection=webrtc_connection, 
+            webrtc_connection=webrtc_connection,
             params=transport_params,
         )
-        
+
         stt = ParakeetSTTService(
             sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
         )
@@ -101,7 +102,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         rag = ModalRagLLMService(
             model="modal-rag",
             params=OpenAILLMService.InputParams(
-                extra = {
+                extra={
                     "stream": True,
                 },
             ),
@@ -110,7 +111,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         messages = [
             {
                 "role": "user",
-                "content": "Hi, could you please introduce yourself, including your name, and concisely tell me what you can do?" ,
+                "content": "Hi, could you please introduce yourself, including your name, and concisely tell me what you can do?",
             }
         ]
 
