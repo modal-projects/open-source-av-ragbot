@@ -22,11 +22,11 @@ with image.imports():
     from fastapi.responses import StreamingResponse
 
 @app.cls(
-    gpu="h100", scaledown_window=60 * 5, enable_memory_snapshot=True, min_containers=1
+    gpu="h100", scaledown_window=60 * 5, min_containers=1
 )
 @modal.concurrent(max_inputs=10)
 class Chatterbox:
-    @modal.enter(snap=True)
+    @modal.enter()
     def load(self):
         self.model = ChatterboxTTS.from_pretrained(device="cuda")
         self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_short_24000.wav"
