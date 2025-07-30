@@ -161,7 +161,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             await rtvi.set_bot_ready()
             # Kick off the conversation
             await task.queue_frames([context_aggregator.user().get_context_frame()])
-            await task.queue_frame(get_frames("thinking"))
 
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
@@ -172,6 +171,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
+
+        await task.queue_frame(get_frames("thinking"))
 
         runner = PipelineRunner(handle_sigint=False)
         await runner.run(task)

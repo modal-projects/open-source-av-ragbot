@@ -17,7 +17,7 @@ EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 LLM_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
 MODELS_DIR = Path("/models")
 
-_DEFAULT_MAX_TOKENS = 2048
+_DEFAULT_MAX_TOKENS = 8192
 
 # Main image with vLLM dependencies
 vllm_rag_image = (
@@ -52,7 +52,7 @@ vllm_rag_image = (
     },
     cpu=8,
     memory=8192,
-    gpu="H100",
+    gpu="B200",
     image=vllm_rag_image,
 )
 class ChromaVectorIndex:

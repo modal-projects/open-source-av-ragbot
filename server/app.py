@@ -24,7 +24,8 @@ MINUTES = 60  # seconds in a minute
 @app.function(
     image=bot_image,
     gpu="L40S",
-    timeout=30 * MINUTES
+    timeout=30 * MINUTES,
+    min_containers=1,
 )
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
@@ -80,7 +81,10 @@ web_server_image = (
 )
 
 
-@app.function(image=web_server_image)
+@app.function(
+    image=web_server_image,
+    min_containers=1,
+)
 @modal.concurrent(max_inputs=1)
 @modal.asgi_app()
 def bot_server():
@@ -144,7 +148,7 @@ def frontend_server():
     It is decorated to be used as a Modal ASGI app.
     """
     from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
 
     web_app = FastAPI()
@@ -155,5 +159,9 @@ def frontend_server():
     @web_app.get("/")
     async def root():
         return HTMLResponse(content=open("/frontend/index.html").read())
+    
+    @web_app.post("/offer")
+    async def offer(offer: dict):
+        return RedirectResponse(url="https://modal-labs-shababo-dev--moe-and-dal-ragbot-bot-server.modal.run/offer")
 
     return web_app

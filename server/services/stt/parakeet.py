@@ -33,6 +33,8 @@ image = (
         "fastapi==0.115.12",
         "numpy<2",
         "pydub==0.25.1",
+        "librosa",
+        "soundfile",
     )
     .entrypoint([])  # silence chatty logs by container on start
 )
@@ -49,14 +51,14 @@ TRANSCRIPTION_READY = (
     volumes={"/cache": model_cache},
     gpu="a100",
     image=image,
-    enable_memory_snapshot=True,
     min_containers=1,
 )
 @modal.concurrent(max_inputs=14, target_inputs=10)
 class Parakeet:
-    @modal.enter(snap=True)
+    @modal.enter()
     def load(self):
         import time
+        from urllib.request import urlopen
 
         self.start_time = time.time()
         import logging
@@ -67,20 +69,35 @@ class Parakeet:
         logging.getLogger("nemo_logger").setLevel(logging.CRITICAL)
 
         self.model = nemo_asr.models.ASRModel.from_pretrained(
-            model_name="nvidia/parakeet-tdt-0.6b-v2", map_location="cpu"
+            model_name="nvidia/parakeet-tdt-0.6b-v2", map_location="cuda"
         )
 
-
-    @modal.enter(snap=False)
-    def load_model(self):
-        import time
-
-        self.model.to("cuda")
         self.model.eval()
         self.end_time = time.time()
         print(
             f"🚀 Model loaded! Time taken: {self.end_time - self.start_time:.2f} seconds"
         )
+
+        # warm up model
+        start_time = time.time()
+        audio_url = "https://github.com/kyutai-labs/delayed-streams-modeling/raw/refs/heads/main/audio/bria.mp3"
+        # load with soundfile
+        import soundfile as sf
+        import librosa
+        import io
+        import numpy as np
+        audio_data = urlopen(audio_url).read()
+        audio_bytes, sample_rate = sf.read(io.BytesIO(audio_data))
+        # convert to 16000 Hz
+        if sample_rate != 16000:
+            audio_bytes = librosa.resample(audio_bytes, orig_sr=sample_rate, target_sr=16000)
+        # convert to bytes
+        audio_bytes = audio_bytes.astype(np.int16).tobytes()
+        
+        self.transcribe.local(audio_bytes)
+        end_time = time.time()
+        print(f"🚀 Model warmed up! Time taken: {end_time - start_time:.2f} seconds")
+        
         
 
     @modal.method()
