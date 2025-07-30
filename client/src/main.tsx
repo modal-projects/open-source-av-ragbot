@@ -17,6 +17,14 @@ createRoot(document.getElementById("root")!).render(
           connectParams={{
             connectionUrl: "/offer",
           }}
+          transportOptions={{
+            waitForICEGathering: true,
+            iceServers: [
+              {
+                urls: "stun:stun.l.google.com:19302",
+              },
+            ],
+          }}
           noUserVideo={true}
         />
       </FullScreenContainer>

@@ -173,13 +173,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
 
-        @transport.event_handler("on_client_closed")
-        async def on_client_closed(transport, client):
-            logger.info("Pipecat Client closed")
-            await task.cancel()
-            logger.info("Pipeline task cancelled.")
-
-        runner = PipelineRunner()
+        runner = PipelineRunner(handle_sigint=False)
         await runner.run(task)
 
         logger.info("Pipeline task Finished.")
