@@ -13,6 +13,7 @@ createRoot(document.getElementById("root")!).render(
     <ThemeProvider>
       <FullScreenContainer>
         <ConsoleTemplate
+          title="Open Source AV RAGbot"
           transportType="smallwebrtc"
           connectParams={{
             connectionUrl: "/offer",
