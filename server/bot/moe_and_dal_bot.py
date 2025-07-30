@@ -82,7 +82,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 smart_turn_model_path=None,
                 # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
-                    stop_secs=3.0,
+                    stop_secs=2.0,
                     pre_speech_ms=0.1,
                     max_duration_secs=8.0
                 )

@@ -184,7 +184,7 @@ class ChromaVectorIndex:
             print(f"Error getting vector index: {type(e)}: {e}")
             return self._create_vector_index()
 
-_MAX_CONCURRENT_INPUTS = 3
+# _MAX_CONCURRENT_INPUTS = 3
 @app.cls(
     volumes={
         "/models": models_volume,
@@ -198,7 +198,7 @@ _MAX_CONCURRENT_INPUTS = 3
     timeout=10 * 60,
     min_containers=1,
 )
-@modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
+# @modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
 class VLLMRAGServer:
     
     @modal.enter()
@@ -264,10 +264,10 @@ class VLLMRAGServer:
         
         # Setup vLLM engine
         engine_kwargs = {
-            "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
+            # "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
             "enable_chunked_prefill": False,
-            "max_num_batched_tokens": 16384,  
-            "max_model_len": 8192,  # must be <= max_num_batched_tokens
+            # "max_num_batched_tokens": 16384,  
+            # "max_model_len": 8192,  # must be <= max_num_batched_tokens
         }
         
         engine_start = time.perf_counter()
