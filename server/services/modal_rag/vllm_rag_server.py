@@ -17,7 +17,7 @@ EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 LLM_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
 MODELS_DIR = Path("/models")
 
-_DEFAULT_MAX_TOKENS = 2048
+_DEFAULT_MAX_TOKENS = 8192
 
 # Main image with vLLM dependencies
 vllm_rag_image = (
@@ -52,7 +52,7 @@ vllm_rag_image = (
     },
     cpu=8,
     memory=8192,
-    gpu="H100",
+    gpu="B200",
     image=vllm_rag_image,
 )
 class ChromaVectorIndex:
@@ -184,7 +184,7 @@ class ChromaVectorIndex:
             print(f"Error getting vector index: {type(e)}: {e}")
             return self._create_vector_index()
 
-_MAX_CONCURRENT_INPUTS = 3
+# _MAX_CONCURRENT_INPUTS = 3
 @app.cls(
     volumes={
         "/models": models_volume,
@@ -193,12 +193,12 @@ _MAX_CONCURRENT_INPUTS = 3
     },
     cpu=8,
     memory=32768,
-    gpu="H100",
+    gpu="H200",
     image=vllm_rag_image,
     timeout=10 * 60,
     min_containers=1,
 )
-@modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
+# @modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
 class VLLMRAGServer:
     
     @modal.enter()
@@ -264,10 +264,10 @@ class VLLMRAGServer:
         
         # Setup vLLM engine
         engine_kwargs = {
-            "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
+            # "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
             "enable_chunked_prefill": False,
-            "max_num_batched_tokens": 16384,  
-            "max_model_len": 8192,  # must be <= max_num_batched_tokens
+            # "max_num_batched_tokens": 16384,  
+            # "max_model_len": 8192,  # must be <= max_num_batched_tokens
         }
         
         engine_start = time.perf_counter()
@@ -670,7 +670,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
 def get_system_prompt():
     system_prompt = """
 You are a conversational AI that is an expert in the Modal library.
-Your form is the Modal logo, a pair of characters named Moe and Dal. Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'.
+Your form is the Modal logo, a pair of characters named Moe and Dal. Always refer to yourself as "Moe and Dal" and always use the plural form of words such as 'we' and 'us' and never 'I' or 'me'.
 Your job is to provide useful information about Modal and developing with Modal to the user.
 Your answer will consist of three parts: an answer that will be played to audio as speech (spoke_response), snippets of useful code related to the user's query (code blocks),
 and relevant links pulled directly from the documentation context (links).

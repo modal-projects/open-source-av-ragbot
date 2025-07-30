@@ -25,8 +25,16 @@ class ParakeetSTTService(SegmentedSTTService):
     ):
         """Handle a transcription result with tracing."""
         pass
+
+    def can_generate_metrics(self) -> bool:
+        """Indicate that this service can generate usage metrics."""
+        return True
     
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
+        
+        print("🔥 Starting STT...")
+        print(f"🔥 Audio length: {len(audio)} bytes")
+        
         try:
             await self.start_processing_metrics()
             await self.start_ttfb_metrics()

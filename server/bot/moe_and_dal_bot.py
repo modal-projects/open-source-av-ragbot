@@ -82,7 +82,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 smart_turn_model_path=None,
                 # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
-                    stop_secs=3.0,
+                    stop_secs=2.0,
                     pre_speech_ms=0.1,
                     max_duration_secs=8.0
                 )
@@ -161,7 +161,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             await rtvi.set_bot_ready()
             # Kick off the conversation
             await task.queue_frames([context_aggregator.user().get_context_frame()])
-            await task.queue_frame(get_frames("thinking"))
 
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
@@ -172,6 +171,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
+
+        await task.queue_frame(get_frames("thinking"))
 
         runner = PipelineRunner(handle_sigint=False)
         await runner.run(task)
