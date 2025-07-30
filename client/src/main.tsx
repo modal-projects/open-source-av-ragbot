@@ -7,7 +7,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import Logo from "./logo";
 
-import "@pipecat-ai/voice-ui-kit/styles.css";
+import "./global.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -31,6 +31,9 @@ createRoot(document.getElementById("root")!).render(
             ],
           }}
           noUserVideo={true}
+          conversationElementProps={{
+            assistantLabel: "moe-and-dal",
+          }}
         />
       </FullScreenContainer>
     </ThemeProvider>
