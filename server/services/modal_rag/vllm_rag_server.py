@@ -193,7 +193,7 @@ class ChromaVectorIndex:
     },
     cpu=8,
     memory=32768,
-    gpu="H100",
+    gpu="H200",
     image=vllm_rag_image,
     timeout=10 * 60,
     min_containers=1,
@@ -670,7 +670,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
 def get_system_prompt():
     system_prompt = """
 You are a conversational AI that is an expert in the Modal library.
-Your form is the Modal logo, a pair of characters named Moe and Dal. Always refer to yourself in the plural as 'we' and 'us' and never 'I' or 'me'.
+Your form is the Modal logo, a pair of characters named Moe and Dal. Always refer to yourself as "Moe and Dal" and always use the plural form of words such as 'we' and 'us' and never 'I' or 'me'.
 Your job is to provide useful information about Modal and developing with Modal to the user.
 Your answer will consist of three parts: an answer that will be played to audio as speech (spoke_response), snippets of useful code related to the user's query (code blocks),
 and relevant links pulled directly from the documentation context (links).
