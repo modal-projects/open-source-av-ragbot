@@ -5,6 +5,7 @@ import {
 } from "@pipecat-ai/voice-ui-kit";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import Logo from "./logo";
 
 import "@pipecat-ai/voice-ui-kit/styles.css";
 
@@ -14,6 +15,9 @@ createRoot(document.getElementById("root")!).render(
       <FullScreenContainer>
         <ConsoleTemplate
           title="Open Source AV RAGbot"
+          logoComponent={
+            <Logo width="auto" height={26} className="vkui:w-auto" />
+          }
           transportType="smallwebrtc"
           connectParams={{
             connectionUrl: "/offer",
