@@ -212,11 +212,35 @@ class ModalRagStreamingJsonParser:
 
     async def handle_links_complete(self, links: List[str]):
         """Handle completion of the links array."""
+        import requests
+        # for each link, test it we get a 200 response
+        good_links = []
+        for link in links:
+            try:
+                response = requests.get(link)
+                if response.status_code != 200:
+                    print(f"Link {link} returned status code {response.status_code}")
+                    # try changing link to start with https://modal.com/docs if it doesn't work
+                    if link.startswith("https://modal.com") and not link.startswith("https://modal.com/docs/"):
+                        link = link.replace("https://modal.com", "https://modal.com/docs")
+                    if link.endswith(".html"):
+                        link = link[:-5]
+                    response = requests.get(link)
+                    if response.status_code != 200:
+                        print(f"Link {link} returned status code {response.status_code}")
+                        continue
+                    else:
+                        good_links.append(link)
+                else:
+                    good_links.append(link)
+            except Exception as e:
+                print(f"Error testing link {link}: {e}")
+        
         # Send links as structured data
         await self.service.push_frame(RTVIServerMessageFrame(
             data={
                 "type": "links",
-                "payload": links
+                "payload": good_links
             }
         ))
 
