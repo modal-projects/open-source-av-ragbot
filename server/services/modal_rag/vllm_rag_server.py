@@ -14,7 +14,7 @@ chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=
 
 # Model configuration
 EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
-LLM_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
+LLM_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
 MODELS_DIR = Path("/models")
 
 _DEFAULT_MAX_TOKENS = 2048
@@ -52,7 +52,7 @@ vllm_rag_image = (
     },
     cpu=8,
     memory=8192,
-    gpu="H100",
+    gpu="L40S",
     image=vllm_rag_image,
 )
 class ChromaVectorIndex:
@@ -184,7 +184,6 @@ class ChromaVectorIndex:
             print(f"Error getting vector index: {type(e)}: {e}")
             return self._create_vector_index()
 
-_MAX_CONCURRENT_INPUTS = 3
 @app.cls(
     volumes={
         "/models": models_volume,
@@ -198,7 +197,6 @@ _MAX_CONCURRENT_INPUTS = 3
     timeout=10 * 60,
     min_containers=1,
 )
-@modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
 class VLLMRAGServer:
     
     @modal.enter()
@@ -264,10 +262,9 @@ class VLLMRAGServer:
         
         # Setup vLLM engine
         engine_kwargs = {
-            "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
             "enable_chunked_prefill": False,
-            "max_num_batched_tokens": 16384,  
-            "max_model_len": 8192,  # must be <= max_num_batched_tokens
+            # "max_num_batched_tokens": 32768,  
+            # "max_model_len": 16384,  # must be <= max_num_batched_tokens
         }
         
         engine_start = time.perf_counter()
@@ -308,7 +305,7 @@ class VLLMRAGServer:
             self, 
             prompt: str, 
             max_tokens: int = _DEFAULT_MAX_TOKENS, 
-            temperature: float = 0.3, 
+            temperature: float = 0.1, 
             stream: bool = False
         ):
         """Generate completion using vLLM AsyncLLMEngine."""
@@ -425,7 +422,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             streaming_generator = await self.generate_vllm_completion(
                 prompt_template,
                 max_tokens=_DEFAULT_MAX_TOKENS,
-                temperature=0.3,
+                temperature=0.1,
                 stream=True
             )
             print(f"⏱️ [Streaming] vLLM generator setup took {time.perf_counter() - vllm_start:.3f}s")
@@ -474,7 +471,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             model: str
             messages: List[Message]
             max_tokens: Optional[int] = 500
-            temperature: Optional[float] = 0.3
+            temperature: Optional[float] = 0.1
             stream: Optional[bool] = False
             
             class Config:
@@ -734,7 +731,7 @@ def test_service():
         "model": "modal-rag",
         "messages": [{"role": "user", "content": test_question}],
         "max_tokens": _DEFAULT_MAX_TOKENS,
-        "temperature": 0.3,
+        "temperature": 0.1,
         "stream": False  # Non-streaming
     }
     
@@ -799,7 +796,7 @@ def test_service():
         "model": "modal-rag",
         "messages": [{"role": "user", "content": test_question}],
         "max_tokens": _DEFAULT_MAX_TOKENS,
-        "temperature": 0.3,
+        "temperature": 0.1,
         "stream": True  # Enable streaming
     }
     
