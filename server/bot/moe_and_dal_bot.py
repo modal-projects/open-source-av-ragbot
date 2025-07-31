@@ -131,6 +131,13 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         # RTVI events for Pipecat client UI
         rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
+        @rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
+            logger.info("Pipecat client ready.")
+            await rtvi.set_bot_ready()
+            # Kick off the conversation
+            await task.queue_frames([context_aggregator.user().get_context_frame()])
+
         pipeline = Pipeline(
             [
                 transport.input(),
@@ -155,13 +162,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             observers=[RTVIObserver(rtvi)],
         )
 
-        @rtvi.event_handler("on_client_ready")
-        async def on_client_ready(rtvi):
-            logger.info("Pipecat client ready.")
-            await rtvi.set_bot_ready()
-            # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
-
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
             logger.info("Pipecat Client disconnected")
@@ -174,7 +174,9 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
 
         await task.queue_frame(get_frames("thinking"))
 
-        runner = PipelineRunner(handle_sigint=False)
+        await task.queue_frame(get_frames("thinking"))
+
+        runner = PipelineRunner()
         await runner.run(task)
 
         logger.info("Pipeline task Finished.")

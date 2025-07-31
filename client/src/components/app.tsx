@@ -32,7 +32,7 @@ export default function App() {
           case "links":
             content = <Links links={data.payload} />;
             break;
-          case "code":
+          case "code_blocks":
             content = <Code codeBlocks={data.payload} />;
             break;
           default:
