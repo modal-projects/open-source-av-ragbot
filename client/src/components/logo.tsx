@@ -8,21 +8,29 @@ interface LogoProps {
 }
 
 const Logo: React.FC<LogoProps> = ({
-  width = 325,
+  width,
   height = 70,
   className = "",
   style = {},
 }) => {
+  // Don't pass width to SVG if it's "auto" - let CSS handle it
+  const svgProps: React.SVGProps<SVGSVGElement> = {
+    height,
+    viewBox: "0 0 325 70",
+    fill: "none",
+    xmlns: "http://www.w3.org/2000/svg",
+    className,
+    style,
+  };
+
+  // Only add width prop if it's not "auto"
+  if (width !== "auto") {
+    svgProps.width =
+      width || (typeof height === "number" ? (height * 325) / 70 : 325);
+  }
+
   return (
-    <svg
-      width={width}
-      height={height}
-      viewBox="0 0 325 70"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      style={style}
-    >
+    <svg {...svgProps}>
       <path
         d="M16.6876 0.280773C18.3924 -0.361066 20.3164 0.120559 21.5178 1.48984L37.1639 19.3231H83.8774L99.5235 1.48984C100.725 0.120559 102.649 -0.361066 104.354 0.280773C106.059 0.922612 107.187 2.55359 107.187 4.37518V43.7501H121.041V52.5H98.4372V15.9954L89.1478 26.5834C88.3171 27.5302 87.1187 28.073 85.8591 28.073H35.1822C33.9226 28.073 32.7242 27.5302 31.8935 26.5834L22.6041 15.9954V52.5H0V43.7501H13.8541V4.37518C13.8541 2.55359 14.9828 0.922612 16.6876 0.280773Z"
         fill="currentColor"
