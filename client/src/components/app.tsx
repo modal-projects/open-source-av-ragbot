@@ -28,6 +28,9 @@ export default function App() {
     (data: any) => {
       if (injectMessageRef.current) {
         let content;
+        if (!data.payload || data.payload.length === 0) {
+          return;
+        }
         switch (data.type) {
           case "links":
             content = <Links links={data.payload} />;
