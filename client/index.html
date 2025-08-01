@@ -2,56 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Chatbot</title>
+    <title>Open Source AV Ragbot</title>
   </head>
-
   <body>
-    <div class="container">
-      <div class="status-bar">
-        <div class="status">
-          Status: <span id="connection-status">Disconnected</span>
-        </div>
-        <div class="controls">
-          <select id="device-selector"></select>
-          <button id="mic-toggle-btn">Mute Mic</button>
-          <button id="connect-btn">Connect</button>
-          <button id="disconnect-btn" disabled>Disconnect</button>
-        </div>
-      </div>
-
-      <div class="main-content">
-        <div class="content-wrapper">
-          <div class="media-container">
-            <div id="user-video-container"></div>
-            <div id="bot-video-container"></div>
-            <audio id="bot-audio" autoplay></audio>
-          </div>
-          
-          <div class="conversation-panel">
-            <div class="conversation-header">
-              <h3>💬 Conversation</h3>
-            </div>
-            <div id="conversation-log">
-              <div class="empty-state">Your conversation will appear here</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- <div class="device-bar">
-        <div class="device-controls">
-          
-        </div>
-      </div> -->
-
-      <div class="debug-panel">
-        <h3>Debug Info</h3>
-        <div id="debug-log"></div>
-      </div>
-    </div>
-
-    <script type="module" src="/src/app.js"></script>
-    <link rel="stylesheet" href="/src/style.css" />
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
