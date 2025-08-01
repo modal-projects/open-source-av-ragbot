@@ -52,7 +52,7 @@ vllm_rag_image = (
     },
     cpu=8,
     memory=8192,
-    gpu="B200",
+    gpu="L40S",
     image=vllm_rag_image,
 )
 class ChromaVectorIndex:
