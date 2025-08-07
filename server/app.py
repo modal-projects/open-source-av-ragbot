@@ -14,6 +14,7 @@ bot_image = (
     .apt_install("ffmpeg")
     .pip_install(
         "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]==0.0.76",
+        "websocket-client"
     )
     .add_local_dir("server", remote_path="/root/server")
 )
