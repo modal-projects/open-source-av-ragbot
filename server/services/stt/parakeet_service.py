@@ -4,7 +4,7 @@ from typing import AsyncGenerator, Optional
 from loguru import logger
 
 from pipecat.frames.frames import ErrorFrame, Frame, TranscriptionFrame
-from pipecat.services.stt_service import SegmentedSTTService
+from pipecat.services.stt_service import STTService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
 from pipecat.utils.time import time_now_iso8601
@@ -12,7 +12,7 @@ from pipecat.utils.time import time_now_iso8601
 import modal
 import uuid
 
-class ParakeetSTTService(SegmentedSTTService):
+class ParakeetSTTService(STTService):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._id = str(uuid.uuid4())

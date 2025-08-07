@@ -76,11 +76,19 @@ volumes = {hf_cache_vol_path: hf_cache_vol}
 MINUTES = 60
 
 
-@app.cls(image=stt_image, gpu="l40s", volumes=volumes, timeout=10 * MINUTES, enable_memory_snapshot=True, experimental_options={"enable_gpu_snapshot": True})
+@app.cls(
+    image=stt_image, 
+    gpu="l40s", 
+    volumes=volumes, 
+    timeout=10 * MINUTES, 
+    # enable_memory_snapshot=True, 
+    # experimental_options={"enable_gpu_snapshot": True},
+    min_containers=1,
+)
 class KyutaiSTT:
     BATCH_SIZE = 1
 
-    @modal.enter(snap=True)
+    @modal.enter()
     def enter(self):
         import torch
         from huggingface_hub import snapshot_download
@@ -439,50 +447,52 @@ async def test(
     for attempt in range(max_retries):
         try:
             print(f"Attempting to connect (attempt {attempt + 1}/{max_retries})...")
-            async with websockets.connect(ws_url, open_timeout=30) as websocket:
-                print("Connected to WebSocket")
-                
-                # Wait a moment for the server to be ready
-                await asyncio.sleep(2)
-                
-                # Create a list to store transcription results
-                transcription_results = []
-                
-                # Start background task to receive transcription results
-                async def receive_transcription():
-                    try:
-                        while True:
-                            message = await websocket.recv()
-                            if message is None:
-                                break
-                            # Parse the message (server sends b"\x01" + text)
-                            if isinstance(message, bytes) and len(message) > 1 and message[0] == 1:
-                                text = message[1:].decode('utf-8')
-                                transcription_results.append(text)
-                                print(f"📝 Received: {text}")
-                    except websockets.exceptions.ConnectionClosed:
-                        print("📝 Transcription stream ended")
-                
-                # Start the receive task
-                receive_task = asyncio.create_task(receive_transcription())
-                
-                # Send Opus-encoded audio
-                await send_sphn_opus_audio_async(data, websocket, frame_size)
-                
-                # Wait a bit for any remaining transcription results
-                print("⏳ Waiting for final transcription results...")
-                await asyncio.sleep(3)
-                
-                # Cancel the receive task
-                receive_task.cancel()
+            # async with websockets.connect(ws_url, open_timeout=30) as ws:
+            ws = await websockets.connect(ws_url)
+            print("Connected to WebSocket")
+            
+            # Wait a moment for the server to be ready
+            await asyncio.sleep(2)
+            
+            # Create a list to store transcription results
+            transcription_results = []
+            
+            # Start background task to receive transcription results
+            async def receive_transcription():
                 try:
-                    await receive_task
-                except asyncio.CancelledError:
-                    pass
-                
-                print("✅ Audio sent successfully!")
-                print(f"📝 Full transcription: {''.join(transcription_results)}")
-                return  # Exit successfully after sending all audio
+                    while True:
+                        message = await ws.recv()
+                        if message is None:
+                            break
+                        # Parse the message (server sends b"\x01" + text)
+                        if isinstance(message, bytes) and len(message) > 1 and message[0] == 1:
+                            text = message[1:].decode('utf-8')
+                            transcription_results.append(text)
+                            print(f"📝 Received: {text}")
+                except websockets.exceptions.ConnectionClosed:
+                    print("📝 Transcription stream ended")
+            
+            # Start the receive task
+            receive_task = asyncio.create_task(receive_transcription())
+            
+            # Send Opus-encoded audio
+            await send_sphn_opus_audio_async(data, ws, frame_size)
+            
+            # Wait a bit for any remaining transcription results
+            print("⏳ Waiting for final transcription results...")
+            await asyncio.sleep(3)
+            
+            # Cancel the receive task
+            receive_task.cancel()
+            try:
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+            
+            print("✅ Audio sent successfully!")
+            print(f"📝 Full transcription: {''.join(transcription_results)}")
+            ws.close()
+            return  # Exit successfully after sending all audio
         except websockets.exceptions.ConnectionClosed as e:
             print(f"Connection closed normally: {e}")
             return  # Exit gracefully if connection closes normally
@@ -711,3 +721,15 @@ def ui():
         )
 
     return fast_app
+
+
+def get_kyutai_server_url():
+    try:
+        return KyutaiSTT().api.get_web_url()
+    except Exception as e:
+        try:
+            KyutaiSTTCls = modal.Cls.from_name("kyutai-stt", "KyutaiSTT")
+            return KyutaiSTTCls().api.get_web_url()
+        except Exception as e:
+            print(f"❌ Error getting Kyutai server URL: {e}")
+            return None

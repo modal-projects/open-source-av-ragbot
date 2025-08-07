@@ -21,6 +21,7 @@ import sys
 from loguru import logger
 import aiohttp
 
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
@@ -34,7 +35,7 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.network.small_webrtc import SmallWebRTCTransport, SmallWebRTCConnection
 from server.bot.animation import MoeDalBotAnimation, get_frames
 from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
-from ..services.stt.parakeet_service import ParakeetSTTService
+from ..services.stt.kyutai_service import KyutaiSTTService
 
 from ..services.modal_rag.modal_rag_service import ModalRagLLMService
 from pipecat.services.openai.llm import OpenAILLMService
@@ -76,14 +77,14 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             video_out_height=576,
             video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
             vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(stop_secs=0.2)
+                params=VADParams(stop_secs=0.4)
             ),
             turn_analyzer=LocalSmartTurnAnalyzerV2(
                 smart_turn_model_path=None,
                 # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
                     stop_secs=2.0,
-                    pre_speech_ms=0.1,
+                    pre_speech_ms=0.25,
                     max_duration_secs=8.0
                 )
             ),
@@ -94,7 +95,9 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             params=transport_params,
         )
 
-        stt = ParakeetSTTService(
+        audiobuffer = AudioBufferProcessor(sample_rate=24000)
+
+        stt = KyutaiSTTService(
             sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
         )
 
@@ -136,6 +139,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             [
                 transport.input(),
                 rtvi,
+                audiobuffer,
                 stt,
                 context_aggregator.user(),
                 rag,
