@@ -678,7 +678,7 @@ and relevant links pulled directly from the documentation context (links).
 You MUST respond with ONLY the following JSON format (no additional text):
 
 {{
-    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
+    "speech_response": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
     "code_blocks": list[str], List of actual code snippets that would be useful to display separately
     "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context.
 }}

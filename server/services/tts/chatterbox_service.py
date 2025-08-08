@@ -18,6 +18,7 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.tts_service import TTSService
 from pipecat.utils.tracing.service_decorators import traced_tts
 
+
 class ChatterboxTTSService(TTSService):
     """Chatterbox Text-to-Speech service using Modal deployment with streaming audio.
 
@@ -38,9 +39,11 @@ class ChatterboxTTSService(TTSService):
         
         super().__init__(
             aggregate_sentences=True,
-            push_text_frames=True,
-            push_stop_frames=False,
+            push_text_frames=False,
+            push_stop_frames=True,
             sample_rate=sample_rate,
+            # stop_frame_timeout_s=5.0, 
+            # push_silence_after_stop=True,
             **kwargs,
         )
         
@@ -49,6 +52,8 @@ class ChatterboxTTSService(TTSService):
         self._base_url = base_url or get_chatterbox_server_url()
         self._session = aiohttp_session
         self._started = False
+
+        
 
     def can_generate_metrics(self) -> bool:
         """Indicate that this service can generate usage metrics."""
@@ -117,4 +122,4 @@ class ChatterboxTTSService(TTSService):
         finally:
             self._started = False
             await self.stop_ttfb_metrics()
-            yield TTSStoppedFrame()
+            # yield TTSStoppedFrame()

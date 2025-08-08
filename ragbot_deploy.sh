@@ -108,7 +108,7 @@ if [[ "$DEPLOY_RAG" == "true" ]]; then
 fi
 
 if [[ "$DEPLOY_STT" == "true" ]]; then
-    deploy_service "STT Service" "server.services.stt.parakeet"
+    deploy_service "STT Service" "server.services.stt.kyutai_stt"
     ((deployed_count++))
 fi
 

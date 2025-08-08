@@ -33,11 +33,7 @@ class Chatterbox:
 
         print("🔥 Warming up the model...")
         # warm up the model
-        self.model.generate_stream(
-            "Hello, how are you? We are Moe and Dal. We can help you learn more about Modal and developing with Modal. What can we help you with today?",
-            audio_prompt_path=self.audio_prompt_path,
-            chunk_size=25
-        )
+        self.tts.local("Hello, how are you? We are Moe and Dal. We can help you learn more about Modal and developing with Modal. What can we help you with today?")
 
         print("✅ Model warmed up!")
     

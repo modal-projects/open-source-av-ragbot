@@ -13,21 +13,29 @@ bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
     .apt_install("ffmpeg")
     .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn]==0.0.76",
-        "websocket-client"
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.76",
+        "websocket-client",
+        "aiofiles"
     )
     .add_local_dir("server", remote_path="/root/server")
 )
 
 MINUTES = 60  # seconds in a minute
 
+ragbot_recordings_volume = modal.Volume.from_name("ragbot-recordings", create_if_missing=True)
 
 @app.function(
     image=bot_image,
     gpu="L40S",
     timeout=30 * MINUTES,
     min_containers=1,
+    # max_inputs=1,
+    volumes={
+        "/ragbot_recordings": ragbot_recordings_volume,
+    },
 )
+
+
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
 
@@ -64,11 +72,11 @@ async def run_bot(d: modal.Dict):
             logger.info("WebRTC connection to bot closed.")
 
         print("Starting bot process.")
+        bot_task = asyncio.create_task(run_bot(webrtc_connection))
 
         answer = webrtc_connection.get_answer()
         await d.put.aio("answer", answer)
 
-        bot_task = asyncio.create_task(run_bot(webrtc_connection))
         await bot_task
 
     except Exception as e:
@@ -84,9 +92,7 @@ web_server_image = (
 
 @app.function(
     image=web_server_image,
-    min_containers=1,
 )
-@modal.concurrent(max_inputs=1)
 @modal.asgi_app()
 def bot_server():
     """Create and configure the FastAPI application.

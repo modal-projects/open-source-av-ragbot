@@ -20,6 +20,11 @@ import sys
 
 from loguru import logger
 import aiohttp
+import datetime
+import io
+import os
+import wave
+import aiofiles
 
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -28,17 +33,19 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
-
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.network.small_webrtc import SmallWebRTCTransport, SmallWebRTCConnection
+from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
+from pipecat.services.openai.llm import OpenAILLMService
+
 from server.bot.animation import MoeDalBotAnimation, get_frames
 from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
 from ..services.stt.kyutai_service import KyutaiSTTService
 
 from ..services.modal_rag.modal_rag_service import ModalRagLLMService
-from pipecat.services.openai.llm import OpenAILLMService
+
 
 from ..services.tts.chatterbox_service import ChatterboxTTSService
 from ..services.tts.text_aggregator import ModalRagTextAggregator
@@ -54,6 +61,18 @@ _AUDIO_INPUT_SAMPLE_RATE = 16000
 _AUDIO_OUTPUT_SAMPLE_RATE = 24000
 _MOE_AND_DAL_FRAME_RATE = 12
 
+async def save_audio_file(audio: bytes, filename: str, sample_rate: int, num_channels: int):
+    """Save audio data to a WAV file."""
+    if len(audio) > 0:
+        with io.BytesIO() as buffer:
+            with wave.open(buffer, "wb") as wf:
+                wf.setsampwidth(2)
+                wf.setnchannels(num_channels)
+                wf.setframerate(sample_rate)
+                wf.writeframes(audio)
+            async with aiofiles.open(filename, "wb") as file:
+                await file.write(buffer.getvalue())
+        logger.info(f"Audio saved to {filename}")
 
 async def run_bot(webrtc_connection: SmallWebRTCConnection):
     """Main bot execution function.
@@ -72,19 +91,22 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             audio_in_sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
             audio_out_enabled=True,
             audio_out_sample_rate=_AUDIO_OUTPUT_SAMPLE_RATE,
+            # audio_out_10ms_chunks=8,
+            audio_in_filter=NoisereduceFilter(),
             video_out_enabled=True,
             video_out_width=1024,
             video_out_height=576,
             video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
             vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(stop_secs=0.4)
+                params=VADParams(
+                    stop_secs=0.2)
             ),
             turn_analyzer=LocalSmartTurnAnalyzerV2(
                 smart_turn_model_path=None,
                 # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
                     stop_secs=2.0,
-                    pre_speech_ms=0.25,
+                    pre_speech_ms=0.0,
                     max_duration_secs=8.0
                 )
             ),
@@ -95,10 +117,14 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             params=transport_params,
         )
 
-        audiobuffer = AudioBufferProcessor(sample_rate=24000)
+        audiobuffer = AudioBufferProcessor(
+            # sample_rate=24000,
+            # # buffer_size=int(0.08 * 24000 * 2),  # 80ms of audio at 24kHz, 16-bit PCM = 1920 samples * 2 bytes/sample = 3840 bytes
+        )
 
         stt = KyutaiSTTService(
-            sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
+            sample_rate=24000,
+            audio_passthrough=True,
         )
 
         # Initialize OpenAI API compatibleLLM service
@@ -139,13 +165,13 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             [
                 transport.input(),
                 rtvi,
-                audiobuffer,
                 stt,
                 context_aggregator.user(),
                 rag,
                 tts,
                 ta,
                 transport.output(),
+                audiobuffer,
                 context_aggregator.assistant(),
             ]
         )
@@ -163,9 +189,9 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         @rtvi.event_handler("on_client_ready")
         async def on_client_ready(rtvi):
             logger.info("Pipecat client ready.")
-            await rtvi.set_bot_ready()
+            # await rtvi.set_bot_ready()
             # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
+            
 
 
         @transport.event_handler("on_client_disconnected")
@@ -177,6 +203,30 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
+            await task.queue_frames([context_aggregator.user().get_context_frame()])
+
+        # Handler for merged audio
+        @audiobuffer.event_handler("on_audio_data")
+        async def on_audio_data(buffer, audio, sample_rate, num_channels):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"/ragbot_recordings/merged_{timestamp}.wav"
+            # os.makedirs("recordings", exist_ok=True)
+            await save_audio_file(audio, filename, sample_rate, num_channels)
+
+        # Handler for separate tracks
+        @audiobuffer.event_handler("on_track_audio_data")
+        async def on_track_audio_data(buffer, user_audio, bot_audio, sample_rate, num_channels):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            # os.makedirs("recordings", exist_ok=True)
+
+            # Save user audio
+            user_filename = f"/ragbot_recordings/user_{timestamp}.wav"
+            await save_audio_file(user_audio, user_filename, sample_rate, 1)
+
+            # Save bot audio
+            bot_filename = f"/ragbot_recordings/bot_{timestamp}.wav"
+            await save_audio_file(bot_audio, bot_filename, sample_rate, 1)
+            
 
         await task.queue_frame(get_frames("thinking"))
 

@@ -15,13 +15,15 @@ from pipecat.frames.frames import (
     TranscriptionFrame, 
     InterimTranscriptionFrame,
     UserStartedSpeakingFrame,
-    UserStoppedSpeakingFrame
+    UserStoppedSpeakingFrame,
+    AudioRawFrame
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.stt_service import STTService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
 from pipecat.utils.time import time_now_iso8601
+from pipecat.audio.utils import create_stream_resampler
 
 import uuid
 
@@ -34,8 +36,10 @@ class KyutaiSTTService(STTService):
         self._id = str(uuid.uuid4())
         self.ws = None
         self.is_final = False
-        # KyutaiSTT = modal.Cls.from_name("example-kyutai", "STT")
-        # self.kyutai = KyutaiSTT()
+        self.aggregated_transcript = ""
+        self.receive_task = None
+        self._resampler = create_stream_resampler()
+        
 
     async def start(self, frame: StartFrame) -> None:
         """Start the Deepgram STT service.
@@ -67,46 +71,57 @@ class KyutaiSTTService(STTService):
                     message = await ws.recv()
                     if message is None:
                         break
+                    
                     # Parse the message (server sends b"\x01" + text)
                     if isinstance(message, bytes) and len(message) > 1 and message[0] == 1:
                         transcript = message[1:].decode('utf-8')
                         if len(transcript) > 0:
                             await self.stop_ttfb_metrics()
-                            if self.is_final:
-                                await self.push_frame(
-                                    TranscriptionFrame(
-                                        transcript,
-                                        self._user_id,
-                                        time_now_iso8601(),
-                                        language="en",
-                                        result=transcript,
-                                    )
-                                )
-                                await self._handle_transcription(transcript, self.is_final, "en")
-                                await self.stop_processing_metrics()
-                                self.is_final = False
-                            else:
-                                # For interim transcriptions, just push the frame without tracing
-                                await self.push_frame(
-                                    InterimTranscriptionFrame(
-                                        transcript,
-                                        self._user_id,
-                                        time_now_iso8601(),
-                                        language="en",
-                                        result=transcript,
-                                    )
-                                )
+                            self.aggregated_transcript += transcript
                             
-                            # await self.stop_processing_metrics()
+                            # For interim transcriptions, just push the frame without tracing
+                            await self.push_frame(
+                                InterimTranscriptionFrame(
+                                    self.aggregated_transcript,
+                                    user_id=self._user_id,
+                                    timestamp=time_now_iso8601(),
+                                    # language="en",
+                                    # result=self.aggregated_transcript,
+                                )
+                            )
                         
                         print(f"📝 Received: {transcript}")
+                    
+                    # Handle UserStoppedSpeakingFrame signal (b"\x02")
+                    elif isinstance(message, bytes) and len(message) == 1 and message[0] == 2:
+                        print("📝 UserStoppedSpeakingFrame signal received - processing final transcription")
+                        
+                        # Now execute the final transcription block
+                        if self.aggregated_transcript:
+                            await self.push_frame(
+                                TranscriptionFrame(
+                                    self.aggregated_transcript,
+                                    user_id=self._user_id,
+                                    timestamp=time_now_iso8601(),
+                                    # language="en",
+                                    # result=self.aggregated_transcript,
+                                )
+                            )
+                            await self.stop_processing_metrics()
+                            self.aggregated_transcript = ""
+                        
+                        print("📝 Final transcription processed")
+                        
             except websockets.exceptions.ConnectionClosed:
                 print("📝 Transcription stream ended")
 
-        asyncio.create_task(receive_transcription())
+        self.receive_task = asyncio.create_task(receive_transcription())
                 
     async def stop(self, frame: EndFrame):
         await super().stop(frame)
+        if self.receive_task:
+            self.receive_task.cancel()
+            self.receive_task = None
         if self.ws:
             await self.ws.close()
             self.ws = None
@@ -114,9 +129,25 @@ class KyutaiSTTService(STTService):
             
     async def cancel(self, frame: CancelFrame):
         await super().cancel(frame)
+        if self.receive_task:
+            self.receive_task.cancel()
+            self.receive_task = None
         if self.ws:
             await self.ws.close()
             self.ws = None
+
+    async def process_audio_frame(self, frame: AudioRawFrame, direction: FrameDirection):
+
+        target_sr = self._sample_rate if self._sample_rate != 0 else self.init_sample_rate
+        resampled_audio_bytes = await self._resampler.resample(
+            frame.audio, frame.sample_rate, target_sr
+        )
+        print("--------------------------------")
+        print(f"original audio: {len(frame.audio)}")
+        print(f"resampled_audio_bytes: {len(resampled_audio_bytes)}")
+        print("--------------------------------")
+        frame.audio = resampled_audio_bytes
+        await super().process_audio_frame(frame, direction)
 
     @traced_stt
     async def _handle_transcription(
@@ -136,13 +167,18 @@ class KyutaiSTTService(STTService):
             frame: The frame to process.
             direction: The direction of frame processing.
         """
-        await super().process_frame(frame, direction)
+        
 
         if isinstance(frame, UserStartedSpeakingFrame):
+            
+            self.aggregated_transcript = ""
+            await self.start_processing_metrics()
             await self.start_ttfb_metrics()
-            pass
+            
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            self.is_final = True
+            await self.ws.send(b"\x02")
+
+        await super().process_frame(frame, direction)
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         await self.ws.send(audio)

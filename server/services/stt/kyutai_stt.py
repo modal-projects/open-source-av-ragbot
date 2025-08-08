@@ -19,6 +19,10 @@ import asyncio
 import base64
 import time
 from pathlib import Path
+from collections import deque
+import torch
+import numpy as np
+
 
 import modal
 import websocket
@@ -76,6 +80,37 @@ volumes = {hf_cache_vol_path: hf_cache_vol}
 MINUTES = 60
 
 
+class PromptHook:
+    def __init__(self, tokenizer, prefix, padding_tokens=(0, 3)):
+        self.tokenizer = tokenizer
+        self.prefix_enforce = deque(self.tokenizer.encode(prefix))
+        self.padding_tokens = padding_tokens
+
+    def on_token(self, token):
+        if not self.prefix_enforce:
+            return
+
+        token = token.item()
+
+        if token in self.padding_tokens:
+            pass
+        elif token == self.prefix_enforce[0]:
+            self.prefix_enforce.popleft()
+        else:
+            assert False
+
+    def on_logits(self, logits):
+        if not self.prefix_enforce:
+            return
+
+        mask = torch.zeros_like(logits, dtype=torch.bool)
+        for t in self.padding_tokens:
+            if logits[..., t].max() > 3.0:
+                mask[..., t] = True
+        mask[..., self.prefix_enforce[0]] = True
+
+        logits[:] = torch.where(mask, logits, float("-inf"))
+
 @app.cls(
     image=stt_image, 
     gpu="l40s", 
@@ -93,7 +128,7 @@ class KyutaiSTT:
         import torch
         from huggingface_hub import snapshot_download
         from moshi.models import LMGen, loaders
-
+        import numpy as np
         start_time = time.monotonic_ns()
 
         print("Loading model...")
@@ -103,15 +138,33 @@ class KyutaiSTT:
 
         checkpoint_info = loaders.CheckpointInfo.from_hf_repo(MODEL_NAME)
         self.mimi = checkpoint_info.get_mimi(device=self.device)
-        self.frame_size = int(self.mimi.sample_rate / self.mimi.frame_rate)
+        self.frame_size = self.mimi.frame_size
 
-        self.moshi = checkpoint_info.get_moshi(device=self.device)
-        self.lm_gen = LMGen(self.moshi, temp=0, temp_text=0)
+        print(f"Mimi sample rate: {self.mimi.sample_rate}")
+        print(f"Mimi frame size: {self.frame_size}")
+        print(f"Mimi frame rate: {self.mimi.frame_rate}")
+
+        self.moshi = checkpoint_info.get_moshi(device=self.device, dtype=torch.bfloat16)
+        self.text_tokenizer = checkpoint_info.get_text_tokenizer()
+
+#         transcription_prompt = """
+# The speech you are transcribing is from a user asking questions about Modal, a serverless platform for deploying applications on cloud GPUs.
+# """
+
+        # prompt_hook = PromptHook(self.text_tokenizer, transcription_prompt)
+
+        self.lm_gen = LMGen(
+            self.moshi, 
+            temp=0, 
+            temp_text=0,
+            # on_text_hook=prompt_hook.on_token,
+            # on_text_logits_hook=prompt_hook.on_logits,
+        )
 
         self.mimi.streaming_forever(self.BATCH_SIZE)
         self.lm_gen.streaming_forever(self.BATCH_SIZE)
 
-        self.text_tokenizer = checkpoint_info.get_text_tokenizer()
+        self.reset_state()
 
         self.audio_silence_prefix_seconds = checkpoint_info.stt_config.get(
             "audio_silence_prefix_seconds", 1.0
@@ -132,6 +185,10 @@ class KyutaiSTT:
                 tokens = self.lm_gen.step(codes[:, :, c : c + 1])
                 if tokens is None:
                     continue
+                else:
+                    print(f"Tokens: {tokens}")
+
+        self.reset_state()
         torch.cuda.synchronize()
 
         print(f"Model loaded in {round((time.monotonic_ns() - start_time) / 1e9, 2)}s")
@@ -140,60 +197,58 @@ class KyutaiSTT:
         # reset llm chat history for this input
         self.mimi.reset_streaming()
         self.lm_gen.reset_streaming()
+        self.pcm_buffer = torch.empty(0,0,0, dtype=torch.float32, device=self.device)
+        self.accum_text = ""
+        self.is_final = False
+        self.transcription_queue = asyncio.Queue()
+        self.control_queue = asyncio.Queue()  # Queue for control messages like UserStoppedSpeakingFrame
+        self.inference_queue = asyncio.Queue()
+        self.send_queue = asyncio.Queue()
+        # Add thread-safe buffer for PCM data - optimized for efficiency
+        self.pcm_buffer_lock = asyncio.Lock()
+        self.pcm_buffer_safe = []  # Use list for efficient appending
+        self.pcm_buffer_total_samples = 0  # Track total samples for efficient allocation
+        # Persistent buffer for accumulated audio data
+        self.persistent_pcm_buffer = None
 
-    async def transcribe(self, pcm, all_pcm_data):
-        import numpy as np
+    async def transcribe(self, new_pcm_data):
         import torch
 
-        if pcm is None:
-            yield all_pcm_data
+        if new_pcm_data is None:
             return
-            
-        # print(f"Transcribing {len(pcm)} samples of audio data")
-        if len(pcm) == 0:
-            yield all_pcm_data
-            return
-
-        if pcm.shape[-1] == 0:
-            yield all_pcm_data
+        
+        # Convert numpy array to torch tensor once
+        new_pcm_tensor = torch.from_numpy(new_pcm_data).to(self.device)
+        if len(new_pcm_tensor) == 0:
             return
 
-        if all_pcm_data is None:
-            all_pcm_data = pcm
+        # Add new data to the persistent buffer
+        if not hasattr(self, 'persistent_pcm_buffer') or self.persistent_pcm_buffer is None:
+            self.persistent_pcm_buffer = new_pcm_tensor
         else:
-            all_pcm_data = np.concatenate((all_pcm_data, pcm))
+            self.persistent_pcm_buffer = torch.cat((self.persistent_pcm_buffer, new_pcm_tensor))
 
         # infer on each frame
-        while all_pcm_data.shape[-1] >= self.frame_size:
-            chunk = all_pcm_data[: self.frame_size]
-            all_pcm_data = all_pcm_data[self.frame_size :]
+        while self.persistent_pcm_buffer.shape[-1] >= self.frame_size:
+            chunk = self.persistent_pcm_buffer[: self.frame_size]
+            self.persistent_pcm_buffer = self.persistent_pcm_buffer[self.frame_size :]
 
             with torch.no_grad():
-                chunk = torch.from_numpy(chunk)
-                chunk = chunk.unsqueeze(0).unsqueeze(0)  # (1, 1, frame_size)
-                chunk = chunk.expand(
-                    self.BATCH_SIZE, -1, -1
-                )  # (batch_size, 1, frame_size)
-                chunk = chunk.to(device=self.device)
+                # Optimize tensor reshaping - do it in one operation
+                chunk = chunk.view(self.BATCH_SIZE, 1, self.frame_size)
 
                 # inference on audio chunk
                 codes = self.mimi.encode(chunk)
 
                 # language model inference against encoded audio
                 for c in range(codes.shape[-1]):
-                    text_tokens, vad_heads = self.lm_gen.step_with_extra_heads(
+                    text_tokens = self.lm_gen.step(
                         codes[:, :, c : c + 1]
                     )
+                    
                     if text_tokens is None:
                         # model is silent
-                        yield all_pcm_data
                         return
-                    if vad_heads:
-                        pr_vad = vad_heads[2][0, 0, 0].cpu().item()
-                        if pr_vad > 0.5:
-                            # end of turn detected
-                            yield all_pcm_data
-                            return
 
                     assert text_tokens.shape[1] == self.lm_gen.lm_model.dep_q + 1
 
@@ -201,9 +256,8 @@ class KyutaiSTT:
                     if text_token not in (0, 3):
                         text = self.text_tokenizer.id_to_piece(text_token)
                         text = text.replace("▁", " ")
+                        print(f"Text: {text}")
                         yield text
-
-        yield all_pcm_data
 
     @modal.asgi_app()
     def api(self):
@@ -220,19 +274,16 @@ class KyutaiSTT:
         async def transcribe_websocket(ws: WebSocket):
             await ws.accept()
 
-            opus_stream_inbound = sphn.OpusStreamReader(self.mimi.sample_rate)
-            transcription_queue = asyncio.Queue()
-
             print("Session started")
             tasks = []
 
+            self.reset_state()
+
             # asyncio to run multiple loops concurrently within single websocket connection
-            async def recv_loop():
+            async def recv_loop(ws):
                 """
                 Receives Opus stream across websocket, appends into inbound queue.
                 """
-                nonlocal opus_stream_inbound
-
                 print("recv_loop started")
                 while True:
                     data = await ws.receive_bytes()
@@ -243,65 +294,102 @@ class KyutaiSTT:
                     if len(data) == 0:
                         print("received empty message")
                         continue
-                    # print(f"received {len(data)} bytes")
                     
-                    # Convert raw PCM bytes to numpy array
-                    import numpy as np
+                    # Check for UserStoppedSpeakingFrame signal (b"\x02")
+                    if isinstance(data, bytes) and len(data) == 1 and data[0] == 2:
+                        print("📝 UserStoppedSpeakingFrame signal received")
+                        await self.control_queue.put("user_stopped_speaking")
+                        continue
+                    
+                    print(f"received {len(data)} bytes")
+                    
+                    # Convert raw PCM bytes to numpy array - optimized conversion
                     pcm_data = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
                     
-                    # Store the PCM data directly instead of using OpusStreamReader
-                    if not hasattr(self, 'pcm_buffer'):
-                        self.pcm_buffer = []
-                    self.pcm_buffer.extend(pcm_data)
+                    # Store the PCM data in thread-safe buffer
+                    async with self.pcm_buffer_lock:
+                        self.pcm_buffer_safe.append(pcm_data)
+                        self.pcm_buffer_total_samples += len(pcm_data)
 
             async def inference_loop():
                 """
                 Runs streaming inference on inbound data, and if any response audio is created, appends it to the outbound stream.
                 """
-                nonlocal opus_stream_inbound, transcription_queue
-                all_pcm_data = None
-
                 print("inference_loop started")
                 while True:
                     await asyncio.sleep(0.001)
 
-                    # Use PCM buffer instead of OpusStreamReader
-                    import numpy as np
-                    if hasattr(self, 'pcm_buffer') and len(self.pcm_buffer) > 0:
-                        pcm = np.array(self.pcm_buffer, dtype=np.float32)
-                        self.pcm_buffer = []  # Clear the buffer after processing
-                    else:
-                        pcm = None
-                        
-                    async for msg in self.transcribe(pcm, all_pcm_data):
-                        if isinstance(msg, str):
-                            transcription_queue.put_nowait(msg)
+                    # Use thread-safe PCM buffer - optimized concatenation
+                    async with self.pcm_buffer_lock:
+                        if self.pcm_buffer_safe:
+                            # Use efficient concatenation based on buffer size
+                            if len(self.pcm_buffer_safe) == 1:
+                                new_pcm_data = self.pcm_buffer_safe[0]
+                            else:
+                                # Pre-allocate array for efficiency
+                                new_pcm_data = np.empty(self.pcm_buffer_total_samples, dtype=np.float32)
+                                start_idx = 0
+                                for chunk in self.pcm_buffer_safe:
+                                    end_idx = start_idx + len(chunk)
+                                    new_pcm_data[start_idx:end_idx] = chunk
+                                    start_idx = end_idx
+                            
+                            # Clear buffer and reset counter
+                            self.pcm_buffer_safe = []
+                            self.pcm_buffer_total_samples = 0
                         else:
-                            all_pcm_data = msg
+                            new_pcm_data = None
+                    
+                    # Process new audio data
+                    async for text in self.transcribe(new_pcm_data):
+                        self.accum_text += text
+                    
+                    if self.accum_text:  # Only put non-empty text
+                        await self.transcription_queue.put(self.accum_text)
+                        self.accum_text = ""  # Clear after sending
 
-            async def send_loop():
+            async def send_loop(ws):
                 """
                 Reads outbound data, and sends it across websocket
                 """
-                nonlocal transcription_queue
                 print("send_loop started")
                 while True:
-                    data = await transcription_queue.get()
-
-                    if data is None:
-                        continue
-                    # print(f"sending {data}")
-                    msg = b"\x01" + bytes(
-                        data, encoding="utf8"
-                    )  # prepend "\x01" as a tag to indicate text
-                    await ws.send_bytes(msg)
+                    # Wait for either transcription text or control message
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(self.transcription_queue.get()),
+                            asyncio.create_task(self.control_queue.get())
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # Cancel the pending task
+                    for task in pending:
+                        task.cancel()
+                    
+                    # Process the completed task
+                    for task in done:
+                        try:
+                            data = await task
+                            
+                            if data == "user_stopped_speaking":
+                                # Forward the UserStoppedSpeakingFrame signal
+                                print("📝 Forwarding UserStoppedSpeakingFrame signal")
+                                await ws.send_bytes(b"\x02")
+                            else:
+                                # Send transcription text
+                                msg = b"\x01" + bytes(data, encoding="utf8")
+                                await ws.send_bytes(msg)
+                                
+                        except asyncio.CancelledError:
+                            pass
 
             # run all loops concurrently
             try:
                 tasks = [
-                    asyncio.create_task(recv_loop()),
+                    asyncio.create_task(recv_loop(ws)),
                     asyncio.create_task(inference_loop()),
-                    asyncio.create_task(send_loop()),
+                    asyncio.create_task(send_loop(ws)),
                 ]
                 await asyncio.gather(*tasks)
 
@@ -316,17 +404,14 @@ class KyutaiSTT:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-                self.reset_state()
+                # self.reset_state()
 
         return web_app
 
     @modal.method()
     async def transcribe_queue(self, q: modal.Queue):
         import tempfile
-
         import sphn
-
-        all_pcm_data = None
 
         while True:
             chunk = await q.get.aio(partition="audio")
@@ -341,11 +426,8 @@ class KyutaiSTT:
                 pcm, _ = sphn.read(tmp.name)
                 pcm = pcm.squeeze(0)
 
-            async for msg in self.transcribe(pcm, all_pcm_data):
-                if isinstance(msg, str):
-                    await q.put.aio(msg, partition="transcription")
-                else:
-                    all_pcm_data = msg
+            async for text in self.transcribe(pcm):
+                await q.put.aio(text, partition="transcription")
 
 
 # ## Run a local Python client to test streaming STT
@@ -469,6 +551,9 @@ async def test(
                             text = message[1:].decode('utf-8')
                             transcription_results.append(text)
                             print(f"📝 Received: {text}")
+                        # Handle UserStoppedSpeakingFrame signal
+                        elif isinstance(message, bytes) and len(message) > 1 and message[0] == 2:
+                            print("📝 User stopped speaking frame received.")
                 except websockets.exceptions.ConnectionClosed:
                     print("📝 Transcription stream ended")
             
