@@ -16,7 +16,8 @@ from pipecat.frames.frames import (
     InterimTranscriptionFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
-    AudioRawFrame
+    AudioRawFrame,
+    InputAudioRawFrame
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.stt_service import STTService
@@ -90,7 +91,7 @@ class KyutaiSTTService(STTService):
                                 )
                             )
                         
-                        print(f"📝 Received: {transcript}")
+                            print(f"📝 Received: {transcript}")
                     
                     # Handle UserStoppedSpeakingFrame signal (b"\x02")
                     elif isinstance(message, bytes) and len(message) == 1 and message[0] == 2:
@@ -109,6 +110,8 @@ class KyutaiSTTService(STTService):
                             )
                             await self.stop_processing_metrics()
                             self.aggregated_transcript = ""
+
+                        self.push_frame(UserStoppedSpeakingFrame())
                         
                         print("📝 Final transcription processed")
                         
@@ -138,16 +141,31 @@ class KyutaiSTTService(STTService):
 
     async def process_audio_frame(self, frame: AudioRawFrame, direction: FrameDirection):
 
+        if not frame.audio:
+            return
+        
         target_sr = self._sample_rate if self._sample_rate != 0 else self.init_sample_rate
         resampled_audio_bytes = await self._resampler.resample(
             frame.audio, frame.sample_rate, target_sr
         )
-        print("--------------------------------")
-        print(f"original audio: {len(frame.audio)}")
-        print(f"resampled_audio_bytes: {len(resampled_audio_bytes)}")
-        print("--------------------------------")
-        frame.audio = resampled_audio_bytes
-        await super().process_audio_frame(frame, direction)
+        # print("--------------------------------")
+        # print(f"original audio: {len(frame.audio)}")
+        # print(f"resampled_audio_bytes: {len(resampled_audio_bytes)}")
+        # print("--------------------------------")
+
+        if len(resampled_audio_bytes) == 0:
+            # print(f"RESAMPLED AUDIO IS EMPTY BUT NOT OG AUDIO?, {len(frame.audio)}")
+            # print(type(resampled_audio_bytes))
+            # print(resampled_audio_bytes)
+            # await super().process_audio_frame(frame, direction)
+            return
+        
+        new_frame = InputAudioRawFrame(
+            audio=resampled_audio_bytes,
+            sample_rate=target_sr,
+            num_channels=frame.num_channels,
+        )
+        await super().process_audio_frame(new_frame, direction)
 
     @traced_stt
     async def _handle_transcription(
@@ -167,18 +185,19 @@ class KyutaiSTTService(STTService):
             frame: The frame to process.
             direction: The direction of frame processing.
         """
+
+        if isinstance(frame, UserStoppedSpeakingFrame):
+            return
         
+        await super().process_frame(frame, direction)
 
         if isinstance(frame, UserStartedSpeakingFrame):
             
             self.aggregated_transcript = ""
             await self.start_processing_metrics()
             await self.start_ttfb_metrics()
-            
-        elif isinstance(frame, UserStoppedSpeakingFrame):
-            await self.ws.send(b"\x02")
 
-        await super().process_frame(frame, direction)
+        
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         await self.ws.send(audio)

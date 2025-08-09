@@ -119,9 +119,11 @@ class PromptHook:
     # enable_memory_snapshot=True, 
     # experimental_options={"enable_gpu_snapshot": True},
     min_containers=1,
+    region='us-east-1'
 )
 class KyutaiSTT:
     BATCH_SIZE = 1
+    NUM_SILENCE_FRAMES_TO_STOP = 10
 
     @modal.enter()
     def enter(self):
@@ -192,6 +194,7 @@ class KyutaiSTT:
         torch.cuda.synchronize()
 
         print(f"Model loaded in {round((time.monotonic_ns() - start_time) / 1e9, 2)}s")
+        
 
     def reset_state(self):
         # reset llm chat history for this input
@@ -199,7 +202,8 @@ class KyutaiSTT:
         self.lm_gen.reset_streaming()
         self.pcm_buffer = torch.empty(0,0,0, dtype=torch.float32, device=self.device)
         self.accum_text = ""
-        self.is_final = False
+        self.is_talking = False
+        self.num_silence_frames = 0
         self.transcription_queue = asyncio.Queue()
         self.control_queue = asyncio.Queue()  # Queue for control messages like UserStoppedSpeakingFrame
         self.inference_queue = asyncio.Queue()
@@ -210,8 +214,10 @@ class KyutaiSTT:
         self.pcm_buffer_total_samples = 0  # Track total samples for efficient allocation
         # Persistent buffer for accumulated audio data
         self.persistent_pcm_buffer = None
+        # Pending stop control signal, to be forwarded when buffers drain
+        self.user_stop_pending = False
 
-    async def transcribe(self, new_pcm_data):
+    def transcribe(self, new_pcm_data):
         import torch
 
         if new_pcm_data is None:
@@ -256,8 +262,10 @@ class KyutaiSTT:
                     if text_token not in (0, 3):
                         text = self.text_tokenizer.id_to_piece(text_token)
                         text = text.replace("▁", " ")
-                        print(f"Text: {text}")
+                        # print(f"Text: {text}")
                         yield text
+                    else:
+                        yield "" # let's us count silent frames
 
     @modal.asgi_app()
     def api(self):
@@ -293,12 +301,6 @@ class KyutaiSTT:
                         continue
                     if len(data) == 0:
                         print("received empty message")
-                        continue
-                    
-                    # Check for UserStoppedSpeakingFrame signal (b"\x02")
-                    if isinstance(data, bytes) and len(data) == 1 and data[0] == 2:
-                        print("📝 UserStoppedSpeakingFrame signal received")
-                        await self.control_queue.put("user_stopped_speaking")
                         continue
                     
                     print(f"received {len(data)} bytes")
@@ -340,14 +342,34 @@ class KyutaiSTT:
                         else:
                             new_pcm_data = None
                     
-                    # Process new audio data
-                    async for text in self.transcribe(new_pcm_data):
-                        self.accum_text += text
+                        # Process new audio data
+                        for text in self.transcribe(new_pcm_data):
+                            print(f"🟢 Text: {text}, len: {len(text)}, truth: {bool(len(text))}")
+                            if len(text): # talking
+                                self.accum_text += text
+                                self.num_silence_frames = 0
+                                if not self.is_talking:
+                                    print(f"🟢 User started speaking.")
+                                    self.is_talking = True
+                                    
+                            else:  # not talking (but maybe just a pause)
+                                if self.is_talking:
+                                    self.num_silence_frames += 1
+                                    print(f"🟡 User is silent for {self.num_silence_frames} frames")
+                    print(f"Is talking: {self.is_talking}")
+                    print(f"Num silence frames: {self.num_silence_frames}")
                     
-                    if self.accum_text:  # Only put non-empty text
+                    if len(self.accum_text):  # Only put non-empty text
                         await self.transcription_queue.put(self.accum_text)
                         self.accum_text = ""  # Clear after sending
 
+                    # if we detected silence for sufficiently long, send the UserStoppedSpeakingFrame signal
+                    if self.num_silence_frames >= self.NUM_SILENCE_FRAMES_TO_STOP:
+                        print(f"🔴 User stopped speaking after {self.num_silence_frames} silence frames")
+                        self.is_talking = False
+                        self.num_silence_frames = 0
+                        await self.control_queue.put("user_stopped_speaking")
+                        
             async def send_loop(ws):
                 """
                 Reads outbound data, and sends it across websocket

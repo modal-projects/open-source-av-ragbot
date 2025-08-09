@@ -5,7 +5,7 @@ from typing import Optional
 import re
 
 from pipecat.utils.text.base_text_aggregator import BaseTextAggregator
-
+from pipecat.frames.frames import ControlFrame
 
 ENDOFSENTENCE_PATTERN_STR = r"""
     (?<![A-Z])       # Negative lookbehind: not preceded by an uppercase letter (e.g., "U.S.A.")
@@ -207,6 +207,8 @@ def match_endofsentence(text: str) -> int:
     
     return matches[-1].end() if matches else 0
 
+class ModalRagTextAggregatorStoppedFrame(ControlFrame):
+    pass
 
 class ModalRagTextAggregator(BaseTextAggregator):
     """Enhanced text aggregator for Modal RAG responses.
@@ -229,64 +231,64 @@ class ModalRagTextAggregator(BaseTextAggregator):
         result: Optional[str] = None
 
         self._text += text
-
-        # First, check if we have 12 or more words - if so, send exactly 12
-        processed_text = preprocess_text_for_speech(self._text)
-        word_count = count_words(processed_text)
         
-        if word_count >= 12:
-            # Take exactly 12 words, but be careful about word boundaries
-            words = processed_text.split()
-            target_words = words[:12]
-            result = ' '.join(target_words)
+        # max_words = 20
+        min_words = 4
+
+        eos_end_marker = match_endofsentence(self._text)
+        if eos_end_marker:
+            potential_sentence = self._text[:eos_end_marker]
             
-            # Find the position in original text that corresponds to our 12 words
-            # We need to find where the 12th word ends in the original text
-            original_words = self._text.split()
-            if len(original_words) >= 12:
-                # Use the first 12 words from original text
-                result = ' '.join(original_words[:12])
+            # Apply preprocessing to the potential sentence
+            processed_sentence = preprocess_text_for_speech(potential_sentence)
+            
+            # Check if we have at least 8 words
+            if count_words(processed_sentence) >= min_words:
+                result = processed_sentence
                 # Remove the processed portion from internal text
-                remaining_words = original_words[12:]
-                self._text = ' '.join(remaining_words) if remaining_words else ""
-            else:
-                # Fallback: use the processed text
-                # But we need to be careful about partial words
-                # Find the position in original text that gives us our target
-                target_length = len(result)
-                original_pos = len(self._text)
+                self._text = self._text[eos_end_marker:]
+            # If sentence is too short, keep accumulating
+        # word_count = count_words(result)
+        # if word_count > min_words:
+        #     # Take exactly 12 words, but be careful about word boundaries
+        #     words = processed_text.split()
+        #     target_words = words[:max_words]
+        #     result = ' '.join(target_words)
+            
+        #     # Find the position in original text that corresponds to our 12 words
+        #     # We need to find where the 12th word ends in the original text
+        #     original_words = self._text.split()
+        #     if len(original_words) >= max_words:
+        #         # Use the first 12 words from original text
+        #         result = ' '.join(original_words[:max_words])
+        #         # Remove the processed portion from internal text
+        #         remaining_words = original_words[max_words:]
+        #         self._text = ' '.join(remaining_words) if remaining_words else ""
+        #     else:
+        #         # Fallback: use the processed text
+        #         # But we need to be careful about partial words
+        #         # Find the position in original text that gives us our target
+        #         target_length = len(result)
+        #         original_pos = len(self._text)
                 
-                # Find the closest word boundary
-                for i in range(len(self._text)):
-                    if len(preprocess_text_for_speech(self._text[:i])) >= target_length:
-                        original_pos = i
-                        break
+        #         # Find the closest word boundary
+        #         for i in range(len(self._text)):
+        #             if len(preprocess_text_for_speech(self._text[:i])) >= target_length:
+        #                 original_pos = i
+        #                 break
                 
-                # Make sure we don't cut in the middle of a word
-                # Find the last space before our position
-                last_space = self._text.rfind(' ', 0, original_pos)
-                if last_space > 0:
-                    result = self._text[:last_space]
-                    self._text = self._text[last_space + 1:]
-                else:
-                    # No space found, keep everything
-                    self._text = self._text
-                    result = None
-        else:
-            # Check for sentence boundaries (periods, commas, etc.)
-            eos_end_marker = match_endofsentence(self._text)
-            if eos_end_marker:
-                potential_sentence = self._text[:eos_end_marker]
-                
-                # Apply preprocessing to the potential sentence
-                processed_sentence = preprocess_text_for_speech(potential_sentence)
-                
-                # Check if we have at least 8 words
-                if count_words(processed_sentence) >= 4:
-                    result = processed_sentence
-                    # Remove the processed portion from internal text
-                    self._text = self._text[eos_end_marker:]
-                # If sentence is too short, keep accumulating
+        #         # Make sure we don't cut in the middle of a word
+        #         # Find the last space before our position
+        #         last_space = self._text.rfind(' ', 0, original_pos)
+        #         if last_space > 0:
+        #             result = self._text[:last_space]
+        #             self._text = self._text[last_space + 1:]
+        #         else:
+        #             # No space found, keep everything
+        #             self._text = self._text
+        #             result = None
+
+            
         
         return result
 

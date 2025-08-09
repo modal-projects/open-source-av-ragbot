@@ -22,7 +22,7 @@ with image.imports():
     from fastapi.responses import StreamingResponse
 
 @app.cls(
-    gpu="h100", scaledown_window=60 * 5, min_containers=1
+    gpu="h200", scaledown_window=60 * 5, min_containers=1, region='us-east-1'
 )
 @modal.concurrent(max_inputs=10)
 class Chatterbox:
@@ -32,9 +32,13 @@ class Chatterbox:
         self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_short_24000.wav"
 
         print("🔥 Warming up the model...")
-        # warm up the model
-        self.tts.local("Hello, how are you? We are Moe and Dal. We can help you learn more about Modal and developing with Modal. What can we help you with today?")
+        # warm up the model\
+        self._is_live = False
+        streaming_gen = self.tts.local("Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job.")
 
+        for _ in streaming_gen:
+            pass
+        self._is_live = True
         print("✅ Model warmed up!")
     
     def _create_wav_header(self, sample_rate: int, channels: int, bits_per_sample: int, estimated_data_size: int) -> bytes:
@@ -77,7 +81,7 @@ class Chatterbox:
             stream_generator = self.model.generate_stream(
                 prompt, 
                 audio_prompt_path=self.audio_prompt_path,
-                chunk_size=25  # Smaller chunks for lower latency
+                chunk_size=25,  # Smaller chunks for lower latency
             )
             
             # Wrap the generator to add timing and efficient tensor-to-bytes conversion
@@ -143,7 +147,9 @@ class Chatterbox:
         except Exception as e:
             print(f"❌ Error creating stream generator: {e}")
             raise
-
+        
+        if not self._is_live:
+            return wrapped_generator
 
         # Return the audio as a streaming response with appropriate MIME type.
         # This allows for browsers to playback audio directly.

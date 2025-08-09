@@ -105,8 +105,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 smart_turn_model_path=None,
                 # required kwarg, default model from HF is None (should be Optional not required!)
                 params=SmartTurnParams(
-                    stop_secs=2.0,
-                    pre_speech_ms=0.0,
+                    stop_secs=3.0,
+                    pre_speech_ms=0.25,
                     max_duration_secs=8.0
                 )
             ),
@@ -117,10 +117,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             params=transport_params,
         )
 
-        audiobuffer = AudioBufferProcessor(
-            # sample_rate=24000,
-            # # buffer_size=int(0.08 * 24000 * 2),  # 80ms of audio at 24kHz, 16-bit PCM = 1920 samples * 2 bytes/sample = 3840 bytes
-        )
 
         stt = KyutaiSTTService(
             sample_rate=24000,
@@ -171,7 +167,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
                 tts,
                 ta,
                 transport.output(),
-                audiobuffer,
                 context_aggregator.assistant(),
             ]
         )
@@ -190,9 +185,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         async def on_client_ready(rtvi):
             logger.info("Pipecat client ready.")
             # await rtvi.set_bot_ready()
-            # Kick off the conversation
             
-
+            
 
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
@@ -203,30 +197,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
+            # Kick off the conversation
             await task.queue_frames([context_aggregator.user().get_context_frame()])
-
-        # Handler for merged audio
-        @audiobuffer.event_handler("on_audio_data")
-        async def on_audio_data(buffer, audio, sample_rate, num_channels):
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"/ragbot_recordings/merged_{timestamp}.wav"
-            # os.makedirs("recordings", exist_ok=True)
-            await save_audio_file(audio, filename, sample_rate, num_channels)
-
-        # Handler for separate tracks
-        @audiobuffer.event_handler("on_track_audio_data")
-        async def on_track_audio_data(buffer, user_audio, bot_audio, sample_rate, num_channels):
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            # os.makedirs("recordings", exist_ok=True)
-
-            # Save user audio
-            user_filename = f"/ragbot_recordings/user_{timestamp}.wav"
-            await save_audio_file(user_audio, user_filename, sample_rate, 1)
-
-            # Save bot audio
-            bot_filename = f"/ragbot_recordings/bot_{timestamp}.wav"
-            await save_audio_file(bot_audio, bot_filename, sample_rate, 1)
-            
 
         await task.queue_frame(get_frames("thinking"))
 

@@ -54,6 +54,7 @@ vllm_rag_image = (
     memory=8192,
     gpu="L40S",
     image=vllm_rag_image,
+    region='us-east-1'
 )
 class ChromaVectorIndex:
     is_setup: bool = False
@@ -197,6 +198,7 @@ class ChromaVectorIndex:
     image=vllm_rag_image,
     timeout=10 * 60,
     min_containers=1,
+    region='us-east-1'
 )
 # @modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
 class VLLMRAGServer:

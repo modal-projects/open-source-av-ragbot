@@ -39,10 +39,10 @@ class ChatterboxTTSService(TTSService):
         
         super().__init__(
             aggregate_sentences=True,
-            push_text_frames=False,
+            push_text_frames=True,
             push_stop_frames=True,
             sample_rate=sample_rate,
-            # stop_frame_timeout_s=5.0, 
+            stop_frame_timeout_s=1.0, 
             # push_silence_after_stop=True,
             **kwargs,
         )

@@ -22,20 +22,14 @@ bot_image = (
 
 MINUTES = 60  # seconds in a minute
 
-ragbot_recordings_volume = modal.Volume.from_name("ragbot-recordings", create_if_missing=True)
 
 @app.function(
     image=bot_image,
     gpu="L40S",
     timeout=30 * MINUTES,
     min_containers=1,
-    # max_inputs=1,
-    volumes={
-        "/ragbot_recordings": ragbot_recordings_volume,
-    },
+    region='us-east-1'
 )
-
-
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
 
@@ -90,54 +84,54 @@ web_server_image = (
 )
 
 
-@app.function(
-    image=web_server_image,
-)
-@modal.asgi_app()
-def bot_server():
-    """Create and configure the FastAPI application.
+# @app.function(
+#     image=web_server_image,
+# )
+# @modal.asgi_app()
+# def bot_server():
+#     """Create and configure the FastAPI application.
 
-    This function initializes the FastAPI app with middleware, routes, and lifespan management.
-    It is decorated to be used as a Modal ASGI app.
-    """
-    from fastapi import FastAPI
-    from fastapi.middleware.cors import CORSMiddleware
+#     This function initializes the FastAPI app with middleware, routes, and lifespan management.
+#     It is decorated to be used as a Modal ASGI app.
+#     """
+#     from fastapi import FastAPI
+#     from fastapi.middleware.cors import CORSMiddleware
 
-    # Initialize FastAPI app
-    web_app = FastAPI()
+#     # Initialize FastAPI app
+#     web_app = FastAPI()
 
-    # # # setup CORS
-    web_app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+#     # # # setup CORS
+#     web_app.add_middleware(
+#         CORSMiddleware,
+#         allow_origins=["*"],
+#         allow_credentials=True,
+#         allow_methods=["*"],
+#         allow_headers=["*"],
+#     )
 
-    @web_app.post("/offer")
-    async def offer(offer: dict):
+#     @web_app.post("/offer")
+#     async def offer(offer: dict):
 
-        _ICE_SERVERS = [
-            {
-                "urls": "stun:stun.l.google.com:19302",
-            }
-        ]
+#         _ICE_SERVERS = [
+#             {
+#                 "urls": "stun:stun.l.google.com:19302",
+#             }
+#         ]
 
-        with modal.Dict.ephemeral() as d:
+#         with modal.Dict.ephemeral() as d:
 
-            await d.put.aio("ice_servers", _ICE_SERVERS)
-            await d.put.aio("offer", offer)
+#             await d.put.aio("ice_servers", _ICE_SERVERS)
+#             await d.put.aio("offer", offer)
 
-            run_bot.spawn(d)
+#             run_bot.spawn(d)
 
-            while True:
-                answer = await d.get.aio("answer")
-                if answer:
-                    return answer
-                await asyncio.sleep(0.1)
+#             while True:
+#                 answer = await d.get.aio("answer")
+#                 if answer:
+#                     return answer
+#                 await asyncio.sleep(0.1)
 
-    return web_app
+#     return web_app
 
 
 frontend_image = web_server_image.add_local_dir(
@@ -169,6 +163,24 @@ def frontend_server():
     
     @web_app.post("/offer")
     async def offer(offer: dict):
-        return RedirectResponse(url="https://modal-labs-shababo-dev--moe-and-dal-ragbot-bot-server.modal.run/offer")
+
+        _ICE_SERVERS = [
+            {
+                "urls": "stun:stun.l.google.com:19302",
+            }
+        ]
+
+        with modal.Dict.ephemeral() as d:
+
+            await d.put.aio("ice_servers", _ICE_SERVERS)
+            await d.put.aio("offer", offer)
+
+            run_bot.spawn(d)
+
+            while True:
+                answer = await d.get.aio("answer")
+                if answer:
+                    return answer
+                await asyncio.sleep(0.1)
 
     return web_app
