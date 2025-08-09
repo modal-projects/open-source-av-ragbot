@@ -113,7 +113,7 @@ class PromptHook:
 
 @app.cls(
     image=stt_image, 
-    gpu="l40s", 
+    gpu="L40S", 
     volumes=volumes, 
     timeout=10 * MINUTES, 
     # enable_memory_snapshot=True, 
@@ -304,14 +304,15 @@ class KyutaiSTT:
                         continue
                     
                     print(f"received {len(data)} bytes")
-                    
-                    # Convert raw PCM bytes to numpy array - optimized conversion
-                    pcm_data = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
-                    
-                    # Store the PCM data in thread-safe buffer
-                    async with self.pcm_buffer_lock:
-                        self.pcm_buffer_safe.append(pcm_data)
-                        self.pcm_buffer_total_samples += len(pcm_data)
+
+                    if len(data) > 1:
+                        # Convert raw PCM bytes to numpy array - optimized conversion
+                        pcm_data = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
+                        
+                        # Store the PCM data in thread-safe buffer
+                        async with self.pcm_buffer_lock:
+                            self.pcm_buffer_safe.append(pcm_data)
+                            self.pcm_buffer_total_samples += len(pcm_data)
 
             async def inference_loop():
                 """
@@ -356,8 +357,8 @@ class KyutaiSTT:
                                 if self.is_talking:
                                     self.num_silence_frames += 1
                                     print(f"🟡 User is silent for {self.num_silence_frames} frames")
-                    print(f"Is talking: {self.is_talking}")
-                    print(f"Num silence frames: {self.num_silence_frames}")
+                    # print(f"Is talking: {self.is_talking}")
+                    # print(f"Num silence frames: {self.num_silence_frames}")
                     
                     if len(self.accum_text):  # Only put non-empty text
                         await self.transcription_queue.put(self.accum_text)

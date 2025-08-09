@@ -110,8 +110,6 @@ class KyutaiSTTService(STTService):
                             )
                             await self.stop_processing_metrics()
                             self.aggregated_transcript = ""
-
-                        self.push_frame(UserStoppedSpeakingFrame())
                         
                         print("📝 Final transcription processed")
                         
@@ -185,9 +183,6 @@ class KyutaiSTTService(STTService):
             frame: The frame to process.
             direction: The direction of frame processing.
         """
-
-        if isinstance(frame, UserStoppedSpeakingFrame):
-            return
         
         await super().process_frame(frame, direction)
 

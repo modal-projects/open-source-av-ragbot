@@ -52,9 +52,9 @@ vllm_rag_image = (
     },
     cpu=8,
     memory=8192,
-    gpu="L40S",
+    gpu="l40s",
     image=vllm_rag_image,
-    region='us-east-1'
+    # region='us-east-1-1'
 )
 class ChromaVectorIndex:
     is_setup: bool = False

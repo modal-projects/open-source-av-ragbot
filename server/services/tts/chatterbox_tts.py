@@ -22,7 +22,7 @@ with image.imports():
     from fastapi.responses import StreamingResponse
 
 @app.cls(
-    gpu="h200", scaledown_window=60 * 5, min_containers=1, region='us-east-1'
+    gpu="L40S", scaledown_window=60 * 5, min_containers=1, region='us-east-1'
 )
 @modal.concurrent(max_inputs=10)
 class Chatterbox:

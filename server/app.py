@@ -25,7 +25,7 @@ MINUTES = 60  # seconds in a minute
 
 @app.function(
     image=bot_image,
-    gpu="L40S",
+    gpu="l40s",
     timeout=30 * MINUTES,
     min_containers=1,
     region='us-east-1'
