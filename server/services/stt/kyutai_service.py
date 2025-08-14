@@ -24,7 +24,7 @@ from pipecat.services.stt_service import STTService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
 from pipecat.utils.time import time_now_iso8601
-from pipecat.audio.utils import create_stream_resampler
+from pipecat.audio.resamplers.resampy_resampler import ResampyResampler
 
 import uuid
 
@@ -39,7 +39,7 @@ class KyutaiSTTService(STTService):
         self.is_final = False
         self.aggregated_transcript = ""
         self.receive_task = None
-        self._resampler = create_stream_resampler()
+        self._resampler = ResampyResampler()
         
 
     async def start(self, frame: StartFrame) -> None:
@@ -173,22 +173,19 @@ class KyutaiSTTService(STTService):
             return
         
         target_sr = self._sample_rate if self._sample_rate != 0 else self.init_sample_rate
-        if target_sr == frame.sample_rate:
-            new_frame = frame
-        else:
-            resampled_audio_bytes = await self._resampler.resample(
-                frame.audio, frame.sample_rate, target_sr
-            )
+        resampled_audio_bytes = await self._resampler.resample(
+            frame.audio, frame.sample_rate, target_sr
+        )
 
-            if len(resampled_audio_bytes) == 0:
-                return
-            
-            new_frame = InputAudioRawFrame(
+        if len(resampled_audio_bytes) > 0:
+        
+            frame = InputAudioRawFrame(
                 audio=resampled_audio_bytes,
                 sample_rate=target_sr,
                 num_channels=frame.num_channels,
             )
-        await super().process_audio_frame(new_frame, direction)
+
+        await super().process_audio_frame(frame, direction)
 
     @traced_stt
     async def _handle_transcription(
@@ -209,7 +206,7 @@ class KyutaiSTTService(STTService):
             direction: The direction of frame processing.
         """
         
-        await super().process_frame(frame, direction)
+        
 
         if isinstance(frame, UserStartedSpeakingFrame):
             
@@ -225,9 +222,12 @@ class KyutaiSTTService(STTService):
                     timestamp=time_now_iso8601(),
                     # language="en",
                     # result=self.aggregated_transcript,
-                )
+                ),
+                direction=direction,
             )
             self.aggregated_transcript = ""
+
+        await super().process_frame(frame, direction)
 
         
 

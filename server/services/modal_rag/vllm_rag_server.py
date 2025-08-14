@@ -73,7 +73,7 @@ vllm_rag_image = (
     memory=8192,
     gpu="l40s",
     image=vllm_rag_image,
-    region='us-east-1-1'
+    region='us-east-1'
 )
 class ChromaVectorIndex:
     is_setup: bool = False
@@ -453,6 +453,7 @@ class VLLMRAGServer:
             conversation_history[-1]["content"] += f"\n    \"code_blocks\": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query."
             conversation_history[-1]["content"] += f"\n    \"links\": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs."
             conversation_history[-1]["content"] += f"\n}}"
+            conversation_history[-1]["content"] += f"\nKeep your answer CONCISE and EFFECTIVE. Use 1 to 3 short sentences at most! DO NOT introduce yourself unless you are asked to do so!"
 
             # Stream the vLLM response
             vllm_start = time.perf_counter()

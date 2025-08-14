@@ -44,6 +44,7 @@ from pipecat.processors.aggregators.llm_response import LLMUserAggregatorParams
 from server.bot.animation import MoeDalBotAnimation, get_frames
 from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
 from ..services.stt.kyutai_service import KyutaiSTTService
+from ..services.stt.parakeet_service import ParakeetSTTService
 
 from ..services.modal_rag.modal_rag_service import ModalRagLLMService
 
@@ -100,17 +101,17 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    stop_secs=1.0)
+                    stop_secs=0.2)
             ),
-            # turn_analyzer=LocalSmartTurnAnalyzerV2(
-            #     smart_turn_model_path=None,
-            #     # required kwarg, default model from HF is None (should be Optional not required!)
-            #     params=SmartTurnParams(
-            #         stop_secs=2.0,
-            #         pre_speech_ms=0.0,
-            #         max_duration_secs=8.0
-            #     )
-            # ),
+            turn_analyzer=LocalSmartTurnAnalyzerV2(
+                smart_turn_model_path=None,
+                # required kwarg, default model from HF is None (should be Optional not required!)
+                params=SmartTurnParams(
+                    stop_secs=1.0,
+                    pre_speech_ms=0.0,
+                    max_duration_secs=8.0
+                )
+            ),
         )
 
         transport = SmallWebRTCTransport(
@@ -119,8 +120,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         )
 
 
-        stt = KyutaiSTTService(
-            sample_rate=24000,
+        stt = ParakeetSTTService(
+            # sample_rate=24000,
             audio_passthrough=True,
         )
 
@@ -137,7 +138,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         messages = [
             {
                 "role": "user",
-                "content": "Hi, could the two of you introduce yourselves and concisely tell me what y'all can do?",
+                "content": "Hi, could the two of you introduce yourselves?",
             }
         ]
 

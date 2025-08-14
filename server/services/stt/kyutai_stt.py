@@ -235,26 +235,33 @@ class KyutaiSTT:
             self.persistent_pcm_buffer = torch.cat((self.persistent_pcm_buffer, new_pcm_tensor))
         print(f"📝 Persistent PCM buffer shape: {self.persistent_pcm_buffer.shape}")
         # infer on each frame
-        while self.persistent_pcm_buffer.shape[-1] >= self.frame_size:
-            chunk = self.persistent_pcm_buffer[: self.frame_size]
-            self.persistent_pcm_buffer = self.persistent_pcm_buffer[self.frame_size :]
+        accum_text = ""
+        # Instead of iterating over frame_size chunks, process all available data in one go,
+        # leaving only the remainder in the buffer.
+        total_samples = self.persistent_pcm_buffer.shape[-1]
+        if total_samples >= self.frame_size:
+            # Calculate the largest number of samples divisible by frame_size
+            usable_samples = (total_samples // self.frame_size) * self.frame_size
+            chunk = self.persistent_pcm_buffer[:usable_samples]
+            self.persistent_pcm_buffer = self.persistent_pcm_buffer[usable_samples:]
+
+            # Reshape chunk for batch processing
+            # chunk shape: (usable_samples,) -> (num_chunks, 1, frame_size)
+            num_chunks = usable_samples // self.frame_size
+            chunk = chunk.view(num_chunks, 1, self.frame_size)
 
             with torch.no_grad():
-                # Optimize tensor reshaping - do it in one operation
-                chunk = chunk.view(self.BATCH_SIZE, 1, self.frame_size)
-
-                # inference on audio chunk
+                # Encode all chunks at once
                 codes = self.mimi.encode(chunk)
 
-                # language model inference against encoded audio
-                for c in range(codes.shape[-1]):
-                    text_tokens = self.lm_gen.step(
-                        codes[:, :, c : c + 1]
-                    )
+                # Process each code chunk with the language model
+                for c in range(codes.shape[0]):
+                    code = codes[c : c + 1, :, :]  # shape: (1, 1, frame_size)
+                    text_tokens = self.lm_gen.step(code)
                     
                     if text_tokens is None:
                         # model is silent
-                        return
+                        continue
 
                     assert text_tokens.shape[1] == self.lm_gen.lm_model.dep_q + 1
 
@@ -262,10 +269,12 @@ class KyutaiSTT:
                     if text_token not in (0, 3):
                         text = self.text_tokenizer.id_to_piece(text_token)
                         text = text.replace("▁", " ")
-                        # print(f"Text: {text}")
-                        yield text
-                    else:
-                        yield "" # let's us count silent frames
+                        accum_text += text
+                    
+        if len(accum_text):
+            yield accum_text
+        else:
+            yield "" # let's us count silent frames
 
     @modal.asgi_app()
     def api(self):
@@ -354,7 +363,7 @@ class KyutaiSTT:
                         print(f"🔴 User stopped speaking after {self.num_silence_frames} silence frames")
                         self.is_talking = False
                         self.num_silence_frames = 0
-                        self.reset_state()
+                        # self.reset_state()
                         # await self.control_queue.put("user_stopped_speaking")
                         
             async def send_loop(ws):

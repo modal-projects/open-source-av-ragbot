@@ -49,7 +49,7 @@ TRANSCRIPTION_READY = (
 
 @app.cls(
     volumes={"/cache": model_cache},
-    gpu="a100",
+    gpu="l40s",
     image=image,
     min_containers=1,
 )
@@ -94,7 +94,8 @@ class Parakeet:
         # convert to bytes
         audio_bytes = audio_bytes.astype(np.int16).tobytes()
         
-        self.transcribe.local(audio_bytes)
+        for _ in range(20):
+            self.transcribe.local(audio_bytes)
         end_time = time.time()
         print(f"🚀 Model warmed up! Time taken: {end_time - start_time:.2f} seconds")
         

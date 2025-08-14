@@ -150,13 +150,13 @@ def preprocess_text_for_speech(text: str) -> str:
     # Apply transformations in reverse order as requested
     
     # c. Remove quotes around code words
-    text = remove_quotes_around_code(text)
+    # text = remove_quotes_around_code(text)
     
-    # b. Transform function calls
-    text = transform_function_calls(text)
+    # # b. Transform function calls
+    # text = transform_function_calls(text)
     
-    # a. Transform decorators
-    text = transform_decorators(text)
+    # # a. Transform decorators
+    # text = transform_decorators(text)
     
     return text
 
@@ -240,7 +240,7 @@ class ModalRagTextAggregator(BaseTextAggregator):
             potential_sentence = self._text[:eos_end_marker]
             
             # Apply preprocessing to the potential sentence
-            processed_sentence = preprocess_text_for_speech(potential_sentence)
+            processed_sentence = preprocess_text_for_speech(potential_sentence).strip()
             
             # Check if we have at least 8 words
             if count_words(processed_sentence) >= min_words:
