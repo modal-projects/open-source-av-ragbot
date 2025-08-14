@@ -22,7 +22,7 @@ with image.imports():
     from fastapi.responses import StreamingResponse
 
 @app.cls(
-    gpu="L40S", scaledown_window=60 * 5, min_containers=1, region='us-east-1'
+    gpu="H200", scaledown_window=60 * 5, min_containers=1, region='us-east-1'
 )
 @modal.concurrent(max_inputs=10)
 class Chatterbox:
@@ -34,10 +34,12 @@ class Chatterbox:
         print("🔥 Warming up the model...")
         # warm up the model\
         self._is_live = False
-        streaming_gen = self.tts.local("Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job.")
+        warmup_runs = 3
+        for _ in range(warmup_runs):
+            streaming_gen = self.tts.local("Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job.")
 
-        for _ in streaming_gen:
-            pass
+            for _ in streaming_gen:
+                pass
         self._is_live = True
         print("✅ Model warmed up!")
     
@@ -82,13 +84,15 @@ class Chatterbox:
                 prompt, 
                 audio_prompt_path=self.audio_prompt_path,
                 chunk_size=25,  # Smaller chunks for lower latency
+                cfg_weight = 0.8,
+                exaggeration = 0.6,
             )
             
             # Wrap the generator to add timing and efficient tensor-to-bytes conversion
             def timed_stream_generator():
                 chunk_count = 0
                 first_chunk_time = None
-                header_sent = False
+                # header_sent = False
                 
                 for chunk, metric in stream_generator:
                     if first_chunk_time is None:
@@ -115,21 +119,21 @@ class Chatterbox:
                         audio_numpy = audio_numpy.clip(-1.0, 1.0)
                         pcm_data = (audio_numpy * 32767).astype('int16')
                         
-                        if not header_sent:
-                            # Send WAV header only for the first chunk
-                            # This is much more efficient than full WAV file per chunk
-                            wav_header = self._create_wav_header(
-                                sample_rate=self.model.sr,
-                                channels=1,
-                                bits_per_sample=16,
-                                # Use a large data size for streaming (will be ignored by most players)
-                                estimated_data_size=1000000  
-                            )
-                            yield wav_header + pcm_data.tobytes()
-                            header_sent = True
-                        else:
-                            # For subsequent chunks, just send raw PCM data
-                            yield pcm_data.tobytes()
+                        # if not header_sent:
+                        #     # Send WAV header only for the first chunk
+                        #     # This is much more efficient than full WAV file per chunk
+                        #     wav_header = self._create_wav_header(
+                        #         sample_rate=self.model.sr,
+                        #         channels=1,
+                        #         bits_per_sample=16,
+                        #         # Use a large data size for streaming (will be ignored by most players)
+                        #         estimated_data_size=1000000  
+                        #     )
+                        #     yield wav_header + pcm_data.tobytes()
+                        #     header_sent = True
+                        # else:
+                        #     # For subsequent chunks, just send raw PCM data
+                        yield pcm_data.tobytes()
                         
                     except Exception as e:
                         print(f"❌ Error converting chunk {chunk_count}: {e}")

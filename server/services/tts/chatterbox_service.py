@@ -40,7 +40,7 @@ class ChatterboxTTSService(TTSService):
         super().__init__(
             aggregate_sentences=True,
             push_text_frames=True,
-            push_stop_frames=True,
+            push_stop_frames=False,
             sample_rate=sample_rate,
             stop_frame_timeout_s=1.0, 
             # push_silence_after_stop=True,
@@ -89,6 +89,7 @@ class ChatterboxTTSService(TTSService):
 
         try:
             await self.start_ttfb_metrics()
+            first_bytes = False
 
             async with self._session.post(
                 self._base_url, params=params
@@ -100,8 +101,6 @@ class ChatterboxTTSService(TTSService):
                     yield ErrorFrame(error=f"Chatterbox Service error: {error_text}")
                     return
 
-                await self.start_tts_usage_metrics(text)
-
                 # Start TTS sequence if not already started
                 if not self._started:
                     yield TTSStartedFrame()
@@ -112,8 +111,9 @@ class ChatterboxTTSService(TTSService):
                     if audio_chunk:
                         if b'RIFF' in audio_chunk:
                             audio_chunk = audio_chunk[44:]
-
-                        await self.stop_ttfb_metrics()
+                        if not first_bytes:
+                            await self.stop_ttfb_metrics()
+                            first_bytes = True
                         yield TTSAudioRawFrame(audio_chunk, self.sample_rate, 1)
 
         except Exception as e:
@@ -121,5 +121,4 @@ class ChatterboxTTSService(TTSService):
             yield ErrorFrame(error=str(e))
         finally:
             self._started = False
-            await self.stop_ttfb_metrics()
-            # yield TTSStoppedFrame()
+            yield TTSStoppedFrame()

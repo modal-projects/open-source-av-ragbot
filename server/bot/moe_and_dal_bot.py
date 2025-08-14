@@ -39,6 +39,7 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.network.small_webrtc import SmallWebRTCTransport, SmallWebRTCConnection
 from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.processors.aggregators.llm_response import LLMUserAggregatorParams
 
 from server.bot.animation import MoeDalBotAnimation, get_frames
 from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
@@ -99,17 +100,17 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    stop_secs=0.2)
+                    stop_secs=1.0)
             ),
-            turn_analyzer=LocalSmartTurnAnalyzerV2(
-                smart_turn_model_path=None,
-                # required kwarg, default model from HF is None (should be Optional not required!)
-                params=SmartTurnParams(
-                    stop_secs=3.0,
-                    pre_speech_ms=0.25,
-                    max_duration_secs=8.0
-                )
-            ),
+            # turn_analyzer=LocalSmartTurnAnalyzerV2(
+            #     smart_turn_model_path=None,
+            #     # required kwarg, default model from HF is None (should be Optional not required!)
+            #     params=SmartTurnParams(
+            #         stop_secs=2.0,
+            #         pre_speech_ms=0.0,
+            #         max_duration_secs=8.0
+            #     )
+            # ),
         )
 
         transport = SmallWebRTCTransport(
@@ -136,14 +137,17 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         messages = [
             {
                 "role": "user",
-                "content": "Hi, could you please introduce yourself, including your name, and concisely tell me what you can do?",
+                "content": "Hi, could the two of you introduce yourselves and concisely tell me what y'all can do?",
             }
         ]
 
         # Set up conversation context and management
         # The context_aggregator will automatically collect conversation context
         context = OpenAILLMContext(messages)
-        context_aggregator = rag.create_context_aggregator(context)
+        context_aggregator = rag.create_context_aggregator(
+            context,
+            user_params=LLMUserAggregatorParams(aggregation_timeout=0.05),
+        )
 
         ta = MoeDalBotAnimation()
 

@@ -167,7 +167,7 @@ class KyutaiSTT:
         self.lm_gen.streaming_forever(self.BATCH_SIZE)
 
         self.reset_state()
-
+        
         self.audio_silence_prefix_seconds = checkpoint_info.stt_config.get(
             "audio_silence_prefix_seconds", 1.0
         )
@@ -233,7 +233,7 @@ class KyutaiSTT:
             self.persistent_pcm_buffer = new_pcm_tensor
         else:
             self.persistent_pcm_buffer = torch.cat((self.persistent_pcm_buffer, new_pcm_tensor))
-
+        print(f"📝 Persistent PCM buffer shape: {self.persistent_pcm_buffer.shape}")
         # infer on each frame
         while self.persistent_pcm_buffer.shape[-1] >= self.frame_size:
             chunk = self.persistent_pcm_buffer[: self.frame_size]
@@ -303,16 +303,15 @@ class KyutaiSTT:
                         print("received empty message")
                         continue
                     
-                    print(f"received {len(data)} bytes")
+                    # print(f"received {len(data)} bytes")
 
                     if len(data) > 1:
                         # Convert raw PCM bytes to numpy array - optimized conversion
                         pcm_data = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
-                        
-                        # Store the PCM data in thread-safe buffer
-                        async with self.pcm_buffer_lock:
-                            self.pcm_buffer_safe.append(pcm_data)
-                            self.pcm_buffer_total_samples += len(pcm_data)
+                        await self.inference_queue.put(pcm_data)
+                        print(f"📝 Received: {len(pcm_data)} bytes")
+
+                            
 
             async def inference_loop():
                 """
@@ -320,47 +319,33 @@ class KyutaiSTT:
                 """
                 print("inference_loop started")
                 while True:
-                    await asyncio.sleep(0.001)
+                    # await asyncio.sleep(0.001)
 
                     # Use thread-safe PCM buffer - optimized concatenation
-                    async with self.pcm_buffer_lock:
-                        if self.pcm_buffer_safe:
-                            # Use efficient concatenation based on buffer size
-                            if len(self.pcm_buffer_safe) == 1:
-                                new_pcm_data = self.pcm_buffer_safe[0]
-                            else:
-                                # Pre-allocate array for efficiency
-                                new_pcm_data = np.empty(self.pcm_buffer_total_samples, dtype=np.float32)
-                                start_idx = 0
-                                for chunk in self.pcm_buffer_safe:
-                                    end_idx = start_idx + len(chunk)
-                                    new_pcm_data[start_idx:end_idx] = chunk
-                                    start_idx = end_idx
-                            
-                            # Clear buffer and reset counter
-                            self.pcm_buffer_safe = []
-                            self.pcm_buffer_total_samples = 0
-                        else:
-                            new_pcm_data = None
-                    
-                        # Process new audio data
-                        for text in self.transcribe(new_pcm_data):
-                            print(f"🟢 Text: {text}, len: {len(text)}, truth: {bool(len(text))}")
-                            if len(text): # talking
-                                self.accum_text += text
-                                self.num_silence_frames = 0
-                                if not self.is_talking:
-                                    print(f"🟢 User started speaking.")
-                                    self.is_talking = True
-                                    
-                            else:  # not talking (but maybe just a pause)
-                                if self.is_talking:
-                                    self.num_silence_frames += 1
-                                    print(f"🟡 User is silent for {self.num_silence_frames} frames")
+                    pcm_data = await self.inference_queue.get()
+                    print(f"📝 Performing inference on: {len(pcm_data)} bytes")
+                    if pcm_data is None:
+                        continue
+                
+                    # Process new audio data
+                    for text in self.transcribe(pcm_data):
+                        # print(f"🟢 Text: {text}, len: {len(text)}, truth: {bool(len(text))}")
+                        if len(text): # talking
+                            self.accum_text += text
+                            self.num_silence_frames = 0
+                            if not self.is_talking:
+                                print(f"🟢 User started speaking.")
+                                self.is_talking = True
+                                
+                        else:  # not talking (but maybe just a pause)
+                            if self.is_talking:
+                                self.num_silence_frames += 1
+                                print(f"🟡 User is silent for {self.num_silence_frames} frames")
                     # print(f"Is talking: {self.is_talking}")
                     # print(f"Num silence frames: {self.num_silence_frames}")
                     
                     if len(self.accum_text):  # Only put non-empty text
+                        print(f"📝 Putting transcription text: {self.accum_text}")
                         await self.transcription_queue.put(self.accum_text)
                         self.accum_text = ""  # Clear after sending
 
@@ -369,7 +354,8 @@ class KyutaiSTT:
                         print(f"🔴 User stopped speaking after {self.num_silence_frames} silence frames")
                         self.is_talking = False
                         self.num_silence_frames = 0
-                        await self.control_queue.put("user_stopped_speaking")
+                        self.reset_state()
+                        # await self.control_queue.put("user_stopped_speaking")
                         
             async def send_loop(ws):
                 """
@@ -378,34 +364,14 @@ class KyutaiSTT:
                 print("send_loop started")
                 while True:
                     # Wait for either transcription text or control message
-                    done, pending = await asyncio.wait(
-                        [
-                            asyncio.create_task(self.transcription_queue.get()),
-                            asyncio.create_task(self.control_queue.get())
-                        ],
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-                    
-                    # Cancel the pending task
-                    for task in pending:
-                        task.cancel()
-                    
-                    # Process the completed task
-                    for task in done:
-                        try:
-                            data = await task
+                    transcript = await self.transcription_queue.get()
+                    if transcript is not None:
+                        print(f"📝 Sending transcription text: {transcript}")
+                        msg = b"\x01" + bytes(transcript, encoding="utf8")
+                        await ws.send_bytes(msg)
+                    else:
+                        print("📝 No transcription text to send")
                             
-                            if data == "user_stopped_speaking":
-                                # Forward the UserStoppedSpeakingFrame signal
-                                print("📝 Forwarding UserStoppedSpeakingFrame signal")
-                                await ws.send_bytes(b"\x02")
-                            else:
-                                # Send transcription text
-                                msg = b"\x01" + bytes(data, encoding="utf8")
-                                await ws.send_bytes(msg)
-                                
-                        except asyncio.CancelledError:
-                            pass
 
             # run all loops concurrently
             try:
@@ -706,129 +672,6 @@ def send_opus_audio(audio_data, ws: websocket.WebSocket, encoder, frame_size: in
     # Send end-of-stream marker
     ws.send(None)
 
-    
-# ## Deploy a streaming STT service on the Web
-
-# We've already written a Web backend for our streaming STT service --
-# that's the FastAPI API with the WebSocket in the Modal Cls above.
-
-# We can also deploy a Web frontend. To keep things almost entirely "pure Python",
-# we here use the [FastHTML](https://www.fastht.ml/) library,
-# but you can also deploy a JavaScript frontend with a FastAPI or Node backend.
-
-# We do use a bit of JS for the audio processing in the browser.
-# We add it to the Modal Image using `add_local_dir`.
-# You can find the frontend files [here](https://github.com/modal-labs/modal-examples/tree/main/06_gpu_and_ml/speech-to-text/streaming-kyutai-stt-frontend).
-
-web_image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .pip_install("python-fasthtml==0.12.20")
-    .add_local_dir(
-        Path(__file__).parent / "streaming-kyutai-stt-frontend", "/root/frontend"
-    )
-)
-
-# You can deploy this frontend with
-
-# ```bash
-# modal deploy streaming_kyutai_stt.py
-# ```
-
-# and then interact with it at the printed `ui` URL.
-
-
-@app.function(image=web_image, timeout=10 * MINUTES)
-@modal.concurrent(max_inputs=1000)
-@modal.asgi_app()
-def ui():
-    import fasthtml.common as fh
-
-    modal_logo_svg = open("/root/frontend/modal-logo.svg").read()
-    modal_logo_base64 = base64.b64encode(modal_logo_svg.encode()).decode()
-    app_js = open("/root/frontend/audio.js").read()
-
-    fast_app, rt = fh.fast_app(
-        hdrs=[
-            # audio recording libraries
-            fh.Script(
-                src="https://cdn.jsdelivr.net/npm/opus-recorder@latest/dist/recorder.min.js"
-            ),
-            fh.Script(
-                src="https://cdn.jsdelivr.net/npm/opus-recorder@latest/dist/encoderWorker.min.js"
-            ),
-            fh.Script(
-                src="https://cdn.jsdelivr.net/npm/ogg-opus-decoder/dist/ogg-opus-decoder.min.js"
-            ),
-            # styling
-            fh.Link(
-                href="https://fonts.googleapis.com/css?family=Inter:300,400,600",
-                rel="stylesheet",
-            ),
-            fh.Script(src="https://cdn.tailwindcss.com"),
-            fh.Script("""
-                tailwind.config = {
-                    theme: {
-                        extend: {
-                            colors: {
-                                ground: "#0C0F0B",
-                                primary: "#9AEE86",
-                                "accent-pink": "#FC9CC6",
-                                "accent-blue": "#B8E4FF",
-                            },
-                        },
-                    },
-                };
-            """),
-        ],
-    )
-
-    @rt("/")
-    def get():
-        return (
-            fh.Title("Kyutai Streaming STT"),
-            fh.Body(
-                fh.Div(
-                    fh.Div(
-                        fh.Div(
-                            id="text-output",
-                            cls="flex flex-col-reverse overflow-y-auto max-h-64 pr-2",
-                        ),
-                        cls="w-full overflow-y-auto max-h-64",
-                    ),
-                    cls="bg-gray-800 rounded-lg shadow-lg w-full max-w-xl p-6",
-                ),
-                fh.Footer(
-                    fh.Span(
-                        "Built with ",
-                        fh.A(
-                            "Kyutai",
-                            href="https://github.com/kyutai-labs/delayed-streams-modeling",
-                            target="_blank",
-                            rel="noopener noreferrer",
-                            cls="underline",
-                        ),
-                        " and",
-                        cls="text-sm font-medium text-gray-300 mr-2",
-                    ),
-                    fh.A(
-                        fh.Img(
-                            src=f"data:image/svg+xml;base64,{modal_logo_base64}",
-                            alt="Modal logo",
-                            cls="w-24",
-                        ),
-                        cls="flex items-center p-2 rounded-lg bg-gray-800 shadow-lg hover:bg-gray-700 transition-colors duration-200",
-                        href="https://modal.com",
-                        target="_blank",
-                        rel="noopener noreferrer",
-                    ),
-                    cls="fixed bottom-4 inline-flex items-center justify-center",
-                ),
-                fh.Script(app_js),
-                cls="relative bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4",
-            ),
-        )
-
-    return fast_app
 
 
 def get_kyutai_server_url():

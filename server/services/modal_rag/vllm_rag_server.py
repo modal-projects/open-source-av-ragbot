@@ -4,6 +4,7 @@ import time
 import uuid
 
 import modal
+from pydantic import BaseModel, Field
 
 app = modal.App("modal-rag-openai-vllm")
 
@@ -14,33 +15,51 @@ chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=
 
 # Model configuration
 EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
-LLM_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
+LLM_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 MODELS_DIR = Path("/models")
 
 _DEFAULT_MAX_TOKENS = 8192
 
 # Main image with vLLM dependencies
 vllm_rag_image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .pip_install(
+    modal.Image.from_registry(
+        "nvidia/cuda:12.8.1-devel-ubuntu22.04",
+        add_python="3.12",
+    )
+    .uv_pip_install(
         # vLLM and dependencies
-        "accelerate==1.5.2",
-        "hf-transfer==0.1.8",
-        "huggingface_hub[hf_xet]==0.26.2",
-        "torch==2.5.1",
-        "transformers==4.50.0",
-        "vllm==0.7.3",
+        "accelerate",  # ==1.5.2
+        "hf-transfer",  # ==0.1.8
+        "huggingface_hub[hf_xet]",  # ==0.26.2
+        # "torch==2.7.1",
+        # "transformers==4.53.2",  # ==4.50.0
+        "vllm",
         # LlamaIndex and RAG dependencies
-        "llama-index==0.12.41",
-        "llama-index-embeddings-huggingface==0.5.4",
-        "fastapi[standard]==0.115.9",
-        "llama-index-vector-stores-chroma==0.4.1",
-        "chromadb==1.0.11",
+        "llama-index",  # ==0.12.41
+        "llama-index-embeddings-huggingface",  # ==0.5.4
+        "fastapi[standard]",  # ==0.115.9
+        "llama-index-vector-stores-chroma",  # ==0.4.1
+        "chromadb",  # ==1.0.11
+        # "flashinfer-python==0.2.10",
+        # "triton==3.4.0",
+        pre=True,
+        extra_options="-U --torch-backend=cu128 --extra-index-url https://wheels.vllm.ai/nightly/ --extra-index-url https://download.pytorch.org/whl/nightly/cu128 --index-strategy unsafe-best-match",
     )
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
         "HF_HOME": str(MODELS_DIR),
-        "VLLM_USE_V1": "0"
+        "VLLM_USE_V1": "0",
+        "VERBOSE": "DEBUG",
+        # "VLLM_ATTENTION_BACKEND": "DUAL_CHUNK_FLASH_ATTN",
+        # "VLLM_USE_TRTLLM_ATTENTION": "1",
+        # "TORCH_CUDA_ARCH_LIST": "7.5 8.0 8.9 9.0a 10.0a 12.0",
+        # "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
+        "CUDA_CACHE_PATH": "/models/.nv_cache",
+        "TORCHINDUCTOR_CACHE_DIR": "/models/.inductor_cache",
+        "TRITON_CACHE_DIR": "/models/.triton_cache",
+        "VLLM_CACHE_ROOT": "/models/.vllm_cache",
+        # "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
     })
 )
 
@@ -54,7 +73,7 @@ vllm_rag_image = (
     memory=8192,
     gpu="l40s",
     image=vllm_rag_image,
-    # region='us-east-1-1'
+    region='us-east-1-1'
 )
 class ChromaVectorIndex:
     is_setup: bool = False
@@ -105,40 +124,49 @@ class ChromaVectorIndex:
             self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
             print(f"Chroma collection: {self.chroma_collection.count()}")
             if self.chroma_collection.count() == 0:
-                self._create_vector_index()
+                self.create_vector_index()
             
 
             
             self.is_setup = True
 
+    @modal.method()    
     def create_vector_index(self):
-        return self.get_vector_index.local()
-    
-    def _create_vector_index(self):
         """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
         
         from llama_index.core import Document, StorageContext, VectorStoreIndex
-
+        from llama_index.vector_stores.chroma import ChromaVectorStore
         from llama_index.core.node_parser import (
             SemanticSplitterNodeParser,
+            MarkdownNodeParser,
         )
+
+        self.setup()
 
         try:
 
             create_start = time.perf_counter()
 
             # Load Modal docs
-            with open("/modal_docs/modal_docs.txt") as f:
+            with open("/modal_docs/parsed_modal_content.txt") as f:
                 document = Document(text=f.read())
 
-            node_parser = SemanticSplitterNodeParser(
-                buffer_size=1, breakpoint_percentile_threshold=95, embed_model=self.embedding
-            )
+            # node_parser = SemanticSplitterNodeParser(
+            #     buffer_size=1, breakpoint_percentile_threshold=95, embed_model=self.embedding
+            # )
+            # nodes = node_parser.get_nodes_from_documents([document])
+            node_parser = MarkdownNodeParser()
             nodes = node_parser.get_nodes_from_documents([document])
             print(f"Created {len(nodes)} nodes")
             print(nodes[0].text)
+            print(nodes[100].text)
+
 
             # make storage context
+            self.chroma_client.delete_collection("modal_rag")
+            self.chroma_collection = self.chroma_client.create_collection("modal_rag")
+            self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+            print(f"Chroma collection: {self.chroma_collection.count()}")            
             storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
 
             # Create index from docs in chroma vector store
@@ -149,26 +177,28 @@ class ChromaVectorIndex:
             )
             # test retrieval
             test_nodes = vector_index.as_retriever(
-                similarity_top_k=10
+                similarity_top_k=5
                 ).retrieve("What GPUs can I use with Modal?")
             print(test_nodes)
 
             total_time = time.perf_counter() - create_start
             print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
 
-            return vector_index
         except Exception as e:
             print(f"Error creating vector index: {type(e)}: {e}")
             raise e
 
     @modal.method()
-    def get_vector_index(self):
+    def get_vector_index(self, force_rebuild: bool = False):
         """Get the ChromaDB vector index."""
 
         from llama_index.core import VectorStoreIndex
 
         self.setup()
 
+        if force_rebuild:
+            self.create_vector_index(force_rebuild=True)
+        
         try:
             get_index_start = time.perf_counter()
 
@@ -183,7 +213,13 @@ class ChromaVectorIndex:
         
         except Exception as e:
             print(f"Error getting vector index: {type(e)}: {e}")
-            return self._create_vector_index()
+            # return self.create_vector_index(force_rebuild=True)
+
+class ModalRagResponseStructure(BaseModel):
+    spoke_response: str = Field(description="A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.")
+    code_blocks: list[str] = Field(description="List of actual code snippets that would be useful to display separately")
+    links: list[str] = Field(description="List of relevant URLs. These must be valid URLs pulled directly from the documentation context.")
+
 
 # _MAX_CONCURRENT_INPUTS = 3
 @app.cls(
@@ -192,15 +228,16 @@ class ChromaVectorIndex:
         "/chroma": chroma_db_volume,
         "/modal_docs": modal_docs_volume,
     },
-    cpu=8,
-    memory=32768,
+    # cpu=8,
+    # memory=32768,
     gpu="H200",
     image=vllm_rag_image,
     timeout=10 * 60,
     min_containers=1,
-    region='us-east-1'
+    region='us-east',
+    ephemeral_disk=1000 * 1000, 
 )
-# @modal.concurrent(max_inputs=_MAX_CONCURRENT_INPUTS)
+@modal.concurrent(max_inputs=100)
 class VLLMRAGServer:
     
     @modal.enter()
@@ -220,7 +257,7 @@ class VLLMRAGServer:
         from vllm.engine.arg_utils import AsyncEngineArgs
         from vllm.engine.async_llm_engine import AsyncLLMEngine
         
-        torch.set_float32_matmul_precision("high")
+        # torch.set_float32_matmul_precision("high")
         
         # Seed for reproducibility
         seed = 0
@@ -243,7 +280,7 @@ class VLLMRAGServer:
         try:
 
             vector_index = ChromaVectorIndex().get_vector_index.local()
-            self.retriever = vector_index.as_retriever(similarity_top_k=10)
+            self.retriever = vector_index.as_retriever(similarity_top_k=5)
             
             # Test retrieval with a simple query to validate setup
             try:
@@ -264,21 +301,15 @@ class VLLMRAGServer:
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
         
-        # Setup vLLM engine
-        engine_kwargs = {
-            # "max_num_seqs": _MAX_CONCURRENT_INPUTS,  # Match concurrent max_inputs
-            "enable_chunked_prefill": False,
-            # "max_num_batched_tokens": 16384,  
-            # "max_model_len": 8192,  # must be <= max_num_batched_tokens
-        }
-        
+
         engine_start = time.perf_counter()
-        print(f"Setting up vLLM engine with kwargs: {engine_kwargs}")
         self.vllm_engine = AsyncLLMEngine.from_engine_args(
             AsyncEngineArgs(
                 model=str(self.model_path),
                 tensor_parallel_size=torch.cuda.device_count(),
-                **engine_kwargs,
+                enable_chunked_prefill=False,
+                enable_prefix_caching=True,
+                # enforce_eager=True,
             )
         )
         engine_time = time.perf_counter() - engine_start
@@ -292,6 +323,9 @@ class VLLMRAGServer:
         # Warm up vLLM engine
         print("Warming up vLLM engine...")
         asyncio.run(self.warm_up_vllm())
+
+        print("Will second time crash it...")
+        asyncio.run(self.warm_up_vllm())
         
         setup_time = time.perf_counter() - setup_start
         print(f"🚀 VLLMRAGServer setup complete in {setup_time:.2f}s total!")
@@ -300,7 +334,15 @@ class VLLMRAGServer:
         """Warm up the vLLM engine with a simple completion."""
         try:
             warmup_start = time.perf_counter()
-            await self.generate_vllm_completion("What is Modal?")
+            stream_generator = await self.generate_vllm_completion(
+                [
+                    {"role": "system", "content": get_system_prompt()},
+                    {"role": "user", "content": "What does serverless mean?"}], stream=True)
+            async for generation in stream_generator:
+                pass
+
+            print(generation.outputs[0].text)
+                
             warmup_time = time.perf_counter() - warmup_start
             print(f"✅ vLLM warmup completed in {warmup_time:.2f}s")
         except Exception as e:
@@ -308,33 +350,36 @@ class VLLMRAGServer:
 
     async def generate_vllm_completion(
             self, 
-            prompt: str, 
+            conversation_history: list[dict], 
             max_tokens: int = _DEFAULT_MAX_TOKENS, 
             temperature: float = 0.3, 
             stream: bool = False
         ):
         """Generate completion using vLLM AsyncLLMEngine."""
         from dataclasses import asdict
-        from vllm import SamplingParams
+        from vllm.sampling_params import SamplingParams, GuidedDecodingParams
         from vllm.utils import random_uuid
         
         gen_start = time.perf_counter()
         
         # Apply chat template if available
-        if get_system_prompt() and hasattr(self.tokenizer, "apply_chat_template"):
-            messages = [
-                {"role": "system", "content": get_system_prompt()},
-                {"role": "user", "content": prompt},
-            ]
+        if hasattr(self.tokenizer, "apply_chat_template"):
             formatted_prompt = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                conversation_history, 
+                tokenize=False, 
+                add_generation_prompt=True,
+                enable_thinking=False,
             )
         else:
-            formatted_prompt = prompt
+            formatted_prompt = [f"{msg['role']}: {msg['content']}" for msg in conversation_history]
+            formatted_prompt = "\n".join(formatted_prompt)
+
+        print(f"Formatted prompt:\n\n{formatted_prompt}")
 
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             temperature=temperature,
+            guided_decoding=GuidedDecodingParams(json=ModalRagResponseStructure.model_json_schema())
         )
 
         request_id = random_uuid()
@@ -346,6 +391,7 @@ class VLLMRAGServer:
                 formatted_prompt,
                 sampling_params=sampling_params,
                 request_id=request_id,
+
             )
         else:
             # For non-streaming, collect all results
@@ -366,7 +412,7 @@ class VLLMRAGServer:
             print(f"⏱️ [vLLM] Non-streaming generation completed in {gen_time:.3f}s, output: {len(result)} chars")
             return result
     
-    async def _generate_streaming_response(self, question: str, conversation_history: str = ""):
+    async def _generate_streaming_response(self, question: str, conversation_history: list[dict] = []):
         """Generate streaming response with vLLM - simplified to just stream raw output."""
         
         total_start = time.perf_counter()
@@ -382,13 +428,13 @@ class VLLMRAGServer:
                     retrieved_nodes = self.retriever.retrieve(question)
                     # Filter out nodes with None text and handle gracefully
                     valid_texts = []
-                    for node in retrieved_nodes:
+                    for node_index,node in enumerate(retrieved_nodes):
                         if node.text is not None:
-                            valid_texts.append(node.text)
+                            valid_texts.append(f"Retrieved Modal Docs Section, Chunk {node_index+1}:\n{node.text}")
                         else:
                             print("⚠️ [Streaming] Found node with None text, skipping")
                     
-                    context_str = "\n\n".join(valid_texts) if valid_texts else "No valid context found."
+                    context_str = "\n".join(valid_texts) if valid_texts else "No valid context found."
                 except Exception as e:
                     print(f"⚠️ [Streaming] RAG retrieval failed: {type(e)}: {e}")
                     raise e
@@ -396,36 +442,22 @@ class VLLMRAGServer:
             rag_time = time.perf_counter() - rag_start
             print(f"⏱️ [Streaming] RAG retrieval took {rag_time:.3f}s")
             
-            # Create structured prompt with conversation history
-            history_context = ""
-            if conversation_history:
-                history_context = f"\n\nConversation History:\n{conversation_history}\n"
-            
-            prompt_template = f"""
-Modal Documentation Context: 
+            # Add RAG to most recent user message
+            conversation_history[-1]["content"] += f"\nModal RAG Documentation RAG Context:\n"
+            conversation_history[-1]["content"] += context_str
 
-{context_str}
-
-{history_context}
-
-Current Question: 
-
-{question}
-
-You MUST respond with ONLY the following JSON format (no additional text):
-
-{{
-    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
-    "code_blocks": list[str], List of actual code snippets that would be useful to display separately
-    "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context.
-}}
-
-IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text."""
+            # Restate instructions
+            conversation_history[-1]["content"] += f"\n\nYou MUST respond with ONLY the following JSON format (no additional text):"
+            conversation_history[-1]["content"] += f"\n\n{{"
+            conversation_history[-1]["content"] += f"\n    \"spoke_response\": str, A clean, conversational answer suitable for text-to-speech. The answer must be as useful and a concise as possible. DO NOT use technical symbols, code syntax, or complex formatting. DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
+            conversation_history[-1]["content"] += f"\n    \"code_blocks\": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query."
+            conversation_history[-1]["content"] += f"\n    \"links\": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs."
+            conversation_history[-1]["content"] += f"\n}}"
 
             # Stream the vLLM response
             vllm_start = time.perf_counter()
             streaming_generator = await self.generate_vllm_completion(
-                prompt_template,
+                conversation_history,
                 max_tokens=_DEFAULT_MAX_TOKENS,
                 temperature=0.3,
                 stream=True
@@ -458,8 +490,10 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             
         except Exception as e:
             total_time = time.perf_counter() - total_start
-            print(f"vLLM streaming error: {e}, total time: {total_time:.3f}s")
-            yield {"type": "error", "content": str(e), "total_time": total_time}
+            import traceback
+            print(f"vLLM streaming error: {e}, total time: {total_time:.3f}s\ntraceback: {traceback.format_exc()}")
+            
+            yield {"type": "error", "content": f"{e}: {traceback.format_exc()}", "total_time": total_time}
     
     def _setup_fastapi(self):
         from typing import List, Optional
@@ -492,6 +526,9 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             import asyncio
             from fastapi.responses import StreamingResponse
             
+            
+            print(f"Request: {request}")
+            
             try:
                 # Extract conversation history and current user message
                 conversation_history = []
@@ -499,6 +536,10 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 
                 for msg in request.messages:
                     if msg.role in ["system", "user", "assistant"]:
+                        # if first message is not system, add it to the conversation history
+                        if msg.role != "system" and len(conversation_history) == 0:
+                            conversation_history.append({"role": "system", "content": get_system_prompt()})
+                        # add the message to the conversation history
                         conversation_history.append({"role": msg.role, "content": msg.content})
                         if msg.role == "user":
                             current_user_message = msg.content  # Keep track of the most recent user message
@@ -506,21 +547,12 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 if not current_user_message:
                     raise HTTPException(status_code=400, detail="No user message found")
                 
-                # Format conversation history for context
-                formatted_history = ""
-                if len(conversation_history) > 1:  # If there's more than just the current message
-                    formatted_history = "\n".join([
-                        f"{msg['role'].capitalize()}: {msg['content']}" 
-                        for msg in conversation_history[:-1]  # Exclude the current message
-                    ])
-
-                print(f"Formatted history: {formatted_history}")
-                
+                print(f"Streaming: {getattr(request, 'stream', 'not available')}")
                 if getattr(request, "stream", False):
-
+                    print(f"Streaming response for {current_user_message}")
                     streaming_generator = self._get_streaming_generator(
                         current_user_message,
-                        formatted_history,
+                        conversation_history,
                     )
                     
                     return StreamingResponse(
@@ -533,11 +565,14 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                     )
                 else:
                     # Non-streaming response - collect all streaming output
+
+                    print(f"Non-streaming response for {current_user_message}")
+
                     completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
                     created_timestamp = int(time.time())
                     collected_content = ""
                     
-                    async for result in self._generate_streaming_response(current_user_message, formatted_history):
+                    async for result in self._generate_streaming_response(current_user_message,conversation_history):
                         if result["type"] == "raw_text":
                             collected_content = result["content"]
                         elif result["type"] == "complete":
@@ -571,10 +606,12 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
     
-    def _get_streaming_generator(self, user_message: str, formatted_history: str):
+    def _get_streaming_generator(self, user_message: str, conversation_history: list[dict]):
                 
         print(f"Streaming response for {user_message}")
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+
+        raw_response_generator = self._generate_streaming_response(user_message, conversation_history)
         
         async def streaming_response():
             try:
@@ -596,7 +633,7 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
                 # Process streaming results in real-time
                 current_text = ""
                 
-                async for result in self._generate_streaming_response(user_message, formatted_history):
+                async for result in raw_response_generator:
                     if result["type"] == "raw_text":
                         # Stream the raw text as it comes in
                         new_content = result["content"]
@@ -670,23 +707,24 @@ IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}.
         return self.web_app
     
 def get_system_prompt():
-    system_prompt = """
+    system_prompt = \
+"""
 You are a conversational AI that is an expert in the Modal library.
-Your form is the Modal logo, a pair of characters named Moe and Dal. Always refer to yourself as "Moe and Dal" and always use the plural form of words such as 'we' and 'us' and never 'I' or 'me'.
+Your form is the Modal logo, a pair of characters named Moe and Dal. 
+Always refer to yourself as "Moe and Dal" and refer to yourself in the plural using words such as 'we' and 'us' and never 'I' or 'me'.
 Your job is to provide useful information about Modal and developing with Modal to the user.
-Your answer will consist of three parts: an answer that will be played to audio as speech (spoke_response), snippets of useful code related to the user's query (code blocks),
-and relevant links pulled directly from the documentation context (links).
+Section of Modal's documentation will be provided to you as context in the user's most.
+Your answer will consist of three parts: an answer that will be played to audio as speech (`spoke_response`), snippets of useful code related to the user's query (`code_blocks`),
+and relevant links pulled directly from the documentation context (`links`).
 
 You MUST respond with ONLY the following JSON format (no additional text):
 
 {{
-    "speech_response": str, A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.
-    "code_blocks": list[str], List of actual code snippets that would be useful to display separately
-    "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context.
+    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. The answer must be as useful and a concise as possible. DO NOT use technical symbols, code syntax, or complex formatting. DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
+    "code_blocks": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query.
+    "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs.
 }}
-
-IMPORTANT: Your response must be valid JSON starting with {{ and ending with }}. Do not include any explanatory text.
-    """
+"""
     return system_prompt
 
 def get_rag_server_url():
@@ -707,7 +745,9 @@ def test_service():
     import json
     
     # Setup the system first
-    ChromaVectorIndex().setup_rag_system.remote()
+    ChromaVectorIndex().create_vector_index.remote()
+
+    return
     
     rag_server_url = get_rag_server_url()
     print(f"Testing vLLM RAG Streaming API at {rag_server_url}")    
@@ -728,69 +768,69 @@ def test_service():
     test_question = "How do I create a Modal function with GPU support?"
     
     # Test 1: Non-streaming API
-    print("\n" + "=" * 70)
-    print("🚀 Testing NON-STREAMING vLLM RAG API")
-    print("=" * 70)
+    # print("\n" + "=" * 70)
+    # print("🚀 Testing NON-STREAMING vLLM RAG API")
+    # print("=" * 70)
     
-    payload_non_streaming = {
-        "model": "modal-rag",
-        "messages": [{"role": "user", "content": test_question}],
-        "max_tokens": _DEFAULT_MAX_TOKENS,
-        "temperature": 0.3,
-        "stream": False  # Non-streaming
-    }
+    # payload_non_streaming = {
+    #     "model": "modal-rag",
+    #     "messages": [{"role": "user", "content": test_question}],
+    #     "max_tokens": _DEFAULT_MAX_TOKENS,
+    #     "temperature": 0.3,
+    #     "stream": False  # Non-streaming
+    # }
     
-    print(f"🔍 Question: {test_question}")
-    print("📄 Non-streaming response:")
-    print("-" * 70)
+    # print(f"🔍 Question: {test_question}")
+    # print("📄 Non-streaming response:")
+    # print("-" * 70)
     
-    try:
-        start_time = time.perf_counter()
+    # try:
+    #     start_time = time.perf_counter()
         
-        response = requests.post(
-            f"{rag_server_url}/v1/chat/completions",
-            json=payload_non_streaming,
-            headers={"Content-Type": "application/json"},
-            timeout=120,
-        )
+    #     response = requests.post(
+    #         f"{rag_server_url}/v1/chat/completions",
+    #         json=payload_non_streaming,
+    #         headers={"Content-Type": "application/json"},
+    #         timeout=120,
+    #     )
         
-        if response.status_code == 200:
-            total_time = time.perf_counter() - start_time
-            result = response.json()
+    #     if response.status_code == 200:
+    #         total_time = time.perf_counter() - start_time
+    #         result = response.json()
             
-            print(f"⏱️  Response received in {total_time:.3f}s")
-            print("📋 Response structure:")
-            print(f"   • ID: {result.get('id', 'N/A')}")
-            print(f"   • Object: {result.get('object', 'N/A')}")
-            print(f"   • Model: {result.get('model', 'N/A')}")
-            print(f"   • Created: {result.get('created', 'N/A')}")
+    #         print(f"⏱️  Response received in {total_time:.3f}s")
+    #         print("📋 Response structure:")
+    #         print(f"   • ID: {result.get('id', 'N/A')}")
+    #         print(f"   • Object: {result.get('object', 'N/A')}")
+    #         print(f"   • Model: {result.get('model', 'N/A')}")
+    #         print(f"   • Created: {result.get('created', 'N/A')}")
             
-            if "choices" in result and result["choices"]:
-                choice = result["choices"][0]
-                message = choice.get("message", {})
-                content = message.get("content", "")
+    #         if "choices" in result and result["choices"]:
+    #             choice = result["choices"][0]
+    #             message = choice.get("message", {})
+    #             content = message.get("content", "")
                 
-                print(f"   • Finish reason: {choice.get('finish_reason', 'N/A')}")
-                print(f"   • Content length: {len(content)} characters")
+    #             print(f"   • Finish reason: {choice.get('finish_reason', 'N/A')}")
+    #             print(f"   • Content length: {len(content)} characters")
                 
-                if "usage" in result:
-                    usage = result["usage"]
-                    print(f"   • Usage: {usage.get('prompt_tokens', 0)} prompt + {usage.get('completion_tokens', 0)} completion = {usage.get('total_tokens', 0)} total tokens")
+    #             if "usage" in result:
+    #                 usage = result["usage"]
+    #                 print(f"   • Usage: {usage.get('prompt_tokens', 0)} prompt + {usage.get('completion_tokens', 0)} completion = {usage.get('total_tokens', 0)} total tokens")
                 
-                print("🗣️  Complete response:")
-                print("-" * 40)
-                print(content)
-                print("-" * 40)
-            else:
-                print("❌ No choices in response")
+    #             print("🗣️  Complete response:")
+    #             print("-" * 40)
+    #             print(content)
+    #             print("-" * 40)
+    #         else:
+    #             print("❌ No choices in response")
                 
-        else:
-            print(f"❌ Error {response.status_code}: {response.text}")
+    #     else:
+    #         print(f"❌ Error {response.status_code}: {response.text}")
             
-    except Exception as e:
-        print(f"❌ Non-streaming request failed: {e}")
-        import traceback
-        traceback.print_exc()
+    # except Exception as e:
+    #     print(f"❌ Non-streaming request failed: {e}")
+    #     import traceback
+    #     traceback.print_exc()
     
     # Test 2: Streaming API
     print("\n" + "=" * 70)
