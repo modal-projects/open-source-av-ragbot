@@ -50,6 +50,7 @@ from ..services.modal_rag.modal_rag_service import ModalRagLLMService
 
 
 from ..services.tts.chatterbox_service import ChatterboxTTSService
+from ..services.tts.kokoro_service import KokoroTTSService
 from ..services.tts.text_aggregator import ModalRagTextAggregator
 
 try:
@@ -152,7 +153,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
 
         ta = MoeDalBotAnimation()
 
-        tts = ChatterboxTTSService(
+        tts = KokoroTTSService(
             aiohttp_session=session,
             sample_rate=24000,
             text_aggregator=ModalRagTextAggregator(),
@@ -189,7 +190,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         @rtvi.event_handler("on_client_ready")
         async def on_client_ready(rtvi):
             logger.info("Pipecat client ready.")
-            # await rtvi.set_bot_ready()
+            await rtvi.set_bot_ready()
+            await task.queue_frames([context_aggregator.user().get_context_frame()])
             
             
 
@@ -203,7 +205,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
             # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
+            
 
         await task.queue_frame(get_frames("thinking"))
 

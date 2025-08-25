@@ -15,8 +15,8 @@ ENDOFSENTENCE_PATTERN_STR = r"""
     (?<!Mr|Ms|Dr)    # Negative lookbehind: not preceded by Mr, Ms, Dr (combined bc. length is the same)
     (?<!Mrs)         # Negative lookbehind: not preceded by "Mrs"
     (?<!Prof)        # Negative lookbehind: not preceded by "Prof"
-    (\.\s*\.\s*\.|[\.\?\!;,])|   # Match a period, question mark, exclamation point, semicolon, or comma
-    (\。\s*\。\s*\。|[。？！；,।])  # the full-width version (mainly used in East Asian languages such as Chinese, Hindi)
+    (\.\s*\.\s*\.|[\.\?\!;])|   # Match a period, question mark, exclamation point, or semicolon
+    (\。\s*\。\s*\。|[。？！；])  # the full-width version (mainly used in East Asian languages such as Chinese, Hindi)
     $                # End of string
 """
 
@@ -148,15 +148,16 @@ def transform_decorators(text: str) -> str:
 def preprocess_text_for_speech(text: str) -> str:
     """Apply all text preprocessing for better speech synthesis."""
     # Apply transformations in reverse order as requested
-    
+
     # c. Remove quotes around code words
-    # text = remove_quotes_around_code(text)
-    
-    # # b. Transform function calls
-    # text = transform_function_calls(text)
-    
+    text = remove_quotes_around_code(text)
+
     # # a. Transform decorators
-    # text = transform_decorators(text)
+    text = transform_decorators(text)
+      
+    # # b. Transform function calls
+    text = transform_function_calls(text)
+    
     
     return text
 

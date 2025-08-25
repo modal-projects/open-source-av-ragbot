@@ -322,11 +322,10 @@ class VLLMRAGServer:
 
         # Warm up vLLM engine
         print("Warming up vLLM engine...")
-        asyncio.run(self.warm_up_vllm())
+        for i in range(10): 
+            print(f"Warmup {i}")
+            asyncio.run(self.warm_up_vllm())
 
-        print("Will second time crash it...")
-        asyncio.run(self.warm_up_vllm())
-        
         setup_time = time.perf_counter() - setup_start
         print(f"🚀 VLLMRAGServer setup complete in {setup_time:.2f}s total!")
     
@@ -635,6 +634,7 @@ class VLLMRAGServer:
                 current_text = ""
                 
                 async for result in raw_response_generator:
+                    print(result)
                     if result["type"] == "raw_text":
                         # Stream the raw text as it comes in
                         new_content = result["content"]

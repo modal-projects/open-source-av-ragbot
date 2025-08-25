@@ -22,4 +22,6 @@ dependencies = [
     "html-to-markdown>=1.9.0",
     "lxml>=6.0.0",
     "beautifulsoup4>=4.13.4",
+    "moviepy>=2.2.1",
+    "matplotlib>=3.10.5",
 ]
