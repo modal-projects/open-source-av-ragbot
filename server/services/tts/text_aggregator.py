@@ -5,7 +5,7 @@ from typing import Optional
 import re
 
 from pipecat.utils.text.base_text_aggregator import BaseTextAggregator
-
+from pipecat.frames.frames import ControlFrame
 
 ENDOFSENTENCE_PATTERN_STR = r"""
     (?<![A-Z])       # Negative lookbehind: not preceded by an uppercase letter (e.g., "U.S.A.")
@@ -16,7 +16,7 @@ ENDOFSENTENCE_PATTERN_STR = r"""
     (?<!Mrs)         # Negative lookbehind: not preceded by "Mrs"
     (?<!Prof)        # Negative lookbehind: not preceded by "Prof"
     (\.\s*\.\s*\.|[\.\?\!;])|   # Match a period, question mark, exclamation point, or semicolon
-    (\。\s*\。\s*\。|[。？！；।])  # the full-width version (mainly used in East Asian languages such as Chinese, Hindi)
+    (\。\s*\。\s*\。|[。？！；])  # the full-width version (mainly used in East Asian languages such as Chinese, Hindi)
     $                # End of string
 """
 
@@ -148,32 +148,34 @@ def transform_decorators(text: str) -> str:
 def preprocess_text_for_speech(text: str) -> str:
     """Apply all text preprocessing for better speech synthesis."""
     # Apply transformations in reverse order as requested
-    
+
     # c. Remove quotes around code words
     text = remove_quotes_around_code(text)
-    
-    # b. Transform function calls
+
+    # # a. Transform decorators
+    text = transform_decorators(text)
+      
+    # # b. Transform function calls
     text = transform_function_calls(text)
     
-    # a. Transform decorators
-    text = transform_decorators(text)
     
     return text
 
 
 def match_endofsentence(text: str) -> int:
-    """Finds the position of the end of a sentence in the provided text string.
+    """Finds the position of the end of a sentence or phrase in the provided text string.
 
     This function processes the input text by replacing periods in email
     addresses, numbers, and decorator patterns with ampersands to prevent them 
     from being misidentified as sentence terminals. It then searches for the end 
-    of a sentence using a specified regex pattern.
+    of a sentence or phrase using a specified regex pattern that includes
+    periods, question marks, exclamation points, semicolons, and commas.
 
     Args:
-        text (str): The input text in which to find the end of the sentence.
+        text (str): The input text in which to find the end of the sentence or phrase.
 
     Returns:
-        int: The position of the end of the sentence if found, otherwise 0.
+        int: The position of the end of the sentence or phrase if found, otherwise 0.
 
     """
     text = text.rstrip()
@@ -206,14 +208,17 @@ def match_endofsentence(text: str) -> int:
     
     return matches[-1].end() if matches else 0
 
+class ModalRagTextAggregatorStoppedFrame(ControlFrame):
+    pass
 
 class ModalRagTextAggregator(BaseTextAggregator):
     """Enhanced text aggregator for Modal RAG responses.
     
     This aggregator processes text for better speech synthesis by:
     - Transforming code references into natural language
-    - Ensuring minimum sentence length before completion
-    - Detecting proper sentence boundaries
+    - Ensuring minimum phrase length (8 words) before completion
+    - Limiting output to maximum 12 words to prevent long delays
+    - Detecting proper sentence and phrase boundaries (including commas)
     """
 
     def __init__(self):
@@ -227,21 +232,64 @@ class ModalRagTextAggregator(BaseTextAggregator):
         result: Optional[str] = None
 
         self._text += text
+        
+        # max_words = 20
+        min_words = 4
 
-        # Find sentence boundaries in original text
         eos_end_marker = match_endofsentence(self._text)
         if eos_end_marker:
             potential_sentence = self._text[:eos_end_marker]
             
             # Apply preprocessing to the potential sentence
-            processed_sentence = preprocess_text_for_speech(potential_sentence)
+            processed_sentence = preprocess_text_for_speech(potential_sentence).strip()
             
-            # Check minimum word count on the processed sentence
-            if count_words(processed_sentence) > 3:
+            # Check if we have at least 8 words
+            if count_words(processed_sentence) >= min_words:
                 result = processed_sentence
                 # Remove the processed portion from internal text
                 self._text = self._text[eos_end_marker:]
             # If sentence is too short, keep accumulating
+        # word_count = count_words(result)
+        # if word_count > min_words:
+        #     # Take exactly 12 words, but be careful about word boundaries
+        #     words = processed_text.split()
+        #     target_words = words[:max_words]
+        #     result = ' '.join(target_words)
+            
+        #     # Find the position in original text that corresponds to our 12 words
+        #     # We need to find where the 12th word ends in the original text
+        #     original_words = self._text.split()
+        #     if len(original_words) >= max_words:
+        #         # Use the first 12 words from original text
+        #         result = ' '.join(original_words[:max_words])
+        #         # Remove the processed portion from internal text
+        #         remaining_words = original_words[max_words:]
+        #         self._text = ' '.join(remaining_words) if remaining_words else ""
+        #     else:
+        #         # Fallback: use the processed text
+        #         # But we need to be careful about partial words
+        #         # Find the position in original text that gives us our target
+        #         target_length = len(result)
+        #         original_pos = len(self._text)
+                
+        #         # Find the closest word boundary
+        #         for i in range(len(self._text)):
+        #             if len(preprocess_text_for_speech(self._text[:i])) >= target_length:
+        #                 original_pos = i
+        #                 break
+                
+        #         # Make sure we don't cut in the middle of a word
+        #         # Find the last space before our position
+        #         last_space = self._text.rfind(' ', 0, original_pos)
+        #         if last_space > 0:
+        #             result = self._text[:last_space]
+        #             self._text = self._text[last_space + 1:]
+        #         else:
+        #             # No space found, keep everything
+        #             self._text = self._text
+        #             result = None
+
+            
         
         return result
 

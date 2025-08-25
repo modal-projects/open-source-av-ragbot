@@ -15,4 +15,13 @@ dependencies = [
     "transformers==4.50.0",
     "torch==2.5.1",
     "unstructured>=0.10.0",
+    "websocket-client>=1.8.0",
+    "sphn>=0.2.0",
+    "opuslib>=3.0.1",
+    "websockets>=15.0.1",
+    "html-to-markdown>=1.9.0",
+    "lxml>=6.0.0",
+    "beautifulsoup4>=4.13.4",
+    "moviepy>=2.2.1",
+    "matplotlib>=3.10.5",
 ]

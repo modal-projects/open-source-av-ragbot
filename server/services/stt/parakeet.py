@@ -49,7 +49,7 @@ TRANSCRIPTION_READY = (
 
 @app.cls(
     volumes={"/cache": model_cache},
-    gpu="a100",
+    gpu="l40s",
     image=image,
     min_containers=1,
 )
@@ -94,7 +94,8 @@ class Parakeet:
         # convert to bytes
         audio_bytes = audio_bytes.astype(np.int16).tobytes()
         
-        self.transcribe.local(audio_bytes)
+        for _ in range(20):
+            self.transcribe.local(audio_bytes)
         end_time = time.time()
         print(f"🚀 Model warmed up! Time taken: {end_time - start_time:.2f} seconds")
         
@@ -103,12 +104,15 @@ class Parakeet:
     @modal.method()
     def transcribe(self, audio_bytes: bytes) -> str:
         import numpy as np
+        import time
 
-
+        start_time = time.perf_counter()
         audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
 
         with NoStdStreams():  # hide output, see https://github.com/NVIDIA/NeMo/discussions/3281#discussioncomment-2251217
             output = self.model.transcribe([audio_data])
+
+        print(f"🚀 Transcription time: {time.perf_counter() - start_time:.2f} seconds")
 
         return output[0].text
 

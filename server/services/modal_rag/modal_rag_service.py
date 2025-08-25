@@ -1,6 +1,7 @@
 
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
+# from openai import DefaultAioHttpClient
 
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.utils.tracing.service_decorators import traced_llm
@@ -24,11 +25,12 @@ class ModalRagLLMService(OpenAILLMService):
 
     @traced_llm
     async def _process_context(self, context: OpenAILLMContext):
-
+        import time
         # Reset the JSON parser for this context
         self.json_parser.reset()
 
         await self.start_ttfb_metrics()
+        start_time = time.perf_counter()
 
         chunk_stream: AsyncStream[ChatCompletionChunk] = await self._stream_chat_completions(
             context
@@ -36,22 +38,17 @@ class ModalRagLLMService(OpenAILLMService):
 
         async for chunk in chunk_stream:
             
-            if chunk.usage:
-                tokens = LLMTokenUsage(
-                    prompt_tokens=chunk.usage.prompt_tokens,
-                    completion_tokens=chunk.usage.completion_tokens,
-                    total_tokens=chunk.usage.total_tokens,
-                )
-                await self.start_llm_usage_metrics(tokens)
-
             if chunk.choices is None or len(chunk.choices) == 0:
                 continue
-
-            await self.stop_ttfb_metrics()
 
             if not chunk.choices[0].delta:
                 continue
 
             if chunk.choices[0].delta.content:
+                await self.stop_ttfb_metrics()
+                print(f"🚀 Content: {chunk.choices[0].delta.content}")
+                print(f"🚀 Time taken: {time.perf_counter() - start_time:.2f} seconds")
                 # Process the content through our streaming JSON parser
                 await self.json_parser.process_chunk(chunk.choices[0].delta.content)
+        
+        print(f"🚀 Total time taken: {time.perf_counter() - start_time:.2f} seconds")

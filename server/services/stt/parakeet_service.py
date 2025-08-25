@@ -32,26 +32,27 @@ class ParakeetSTTService(SegmentedSTTService):
     
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         
-        print("🔥 Starting STT...")
-        print(f"🔥 Audio length: {len(audio)} bytes")
+        # print("🔥 Starting STT...")
+        # print(f"🔥 Audio length: {len(audio)} bytes")
         
         try:
             await self.start_processing_metrics()
             await self.start_ttfb_metrics()
 
-            response = self.parakeet.transcribe.remote(audio)
-
-            await self.stop_ttfb_metrics()
-            await self.stop_processing_metrics()
+            response = await self.parakeet.transcribe.remote.aio(audio)
 
             text = response.strip()
 
             if text:
-                await self._handle_transcription(text, True)
-                logger.debug(f"Transcription: [{text}]")
-                yield TranscriptionFrame(text, "", time_now_iso8601())
-            else:
-                logger.warning("Received empty transcription from API")
+                await self.stop_ttfb_metrics()
+                await self.stop_processing_metrics()
+
+                
+                await self._handle_transcription(response, True)
+                logger.debug(f"Transcription: [{response}]")
+                yield TranscriptionFrame(response, "", time_now_iso8601())
+            # else:
+                # logger.warning("Received empty transcription from API")
 
         except Exception as e:
             logger.exception(f"Exception during transcription: {e}")

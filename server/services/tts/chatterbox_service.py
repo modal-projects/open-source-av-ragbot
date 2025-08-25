@@ -18,6 +18,7 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.tts_service import TTSService
 from pipecat.utils.tracing.service_decorators import traced_tts
 
+
 class ChatterboxTTSService(TTSService):
     """Chatterbox Text-to-Speech service using Modal deployment with streaming audio.
 
@@ -41,6 +42,8 @@ class ChatterboxTTSService(TTSService):
             push_text_frames=True,
             push_stop_frames=False,
             sample_rate=sample_rate,
+            # stop_frame_timeout_s=1.0, 
+            # push_silence_after_stop=True,
             **kwargs,
         )
         
@@ -49,6 +52,8 @@ class ChatterboxTTSService(TTSService):
         self._base_url = base_url or get_chatterbox_server_url()
         self._session = aiohttp_session
         self._started = False
+
+        
 
     def can_generate_metrics(self) -> bool:
         """Indicate that this service can generate usage metrics."""
@@ -95,20 +100,18 @@ class ChatterboxTTSService(TTSService):
                     yield ErrorFrame(error=f"Chatterbox Service error: {error_text}")
                     return
 
-                await self.start_tts_usage_metrics(text)
-
                 # Start TTS sequence if not already started
                 if not self._started:
                     yield TTSStartedFrame()
+                    await self.stop_ttfb_metrics()
                     self._started = True
 
                 # Track the duration of this utterance based on the last character's end time
-                async for audio_chunk in response.content.iter_chunked(8192):
+                async for audio_chunk in response.content.iter_chunked(6000):
                     if audio_chunk:
+                        print(f"🚀 Audio chunk: {len(audio_chunk)} bytes")
                         if b'RIFF' in audio_chunk:
                             audio_chunk = audio_chunk[44:]
-
-                        await self.stop_ttfb_metrics()
                         yield TTSAudioRawFrame(audio_chunk, self.sample_rate, 1)
 
         except Exception as e:
@@ -116,5 +119,4 @@ class ChatterboxTTSService(TTSService):
             yield ErrorFrame(error=str(e))
         finally:
             self._started = False
-            await self.stop_ttfb_metrics()
             yield TTSStoppedFrame()

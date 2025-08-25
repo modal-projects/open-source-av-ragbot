@@ -14,3 +14,7 @@ venv
 *.wav
 # node_modules
 node_modules
+
+*.html
+*.mp3
+*.zip
