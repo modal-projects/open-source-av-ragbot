@@ -84,32 +84,28 @@ class ChromaVectorIndex:
         """Setup the complete RAG system."""
         print("Setting up RAG system...")
         self.setup()
-        self.create_vector_index()
+        self.create_vector_index.local()
         print("RAG system setup complete!")
 
 
     def download_models(self):
         from huggingface_hub import snapshot_download
-
+        print("Downloading models...")
         for repo_id in [EMBEDDING_MODEL, LLM_MODEL]:
             snapshot_download(repo_id=repo_id, local_dir=MODELS_DIR / repo_id)
             print(f"Model downloaded to {MODELS_DIR / repo_id}")
-
+    
+    # @modal.enter()
     def setup(self):
-        if not self.is_setup:
-            self._setup()
-
-    @modal.enter()
-    def _setup(self):
         """Setup the ChromaDB vector index."""
         import chromadb
         import torch
 
         from llama_index.vector_stores.chroma import ChromaVectorStore
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
+        print("Setup function...")
         if not self.is_setup:
-
+            print("Setup function... is_setup is False")
             # check of models are already downloaded
             if not (MODELS_DIR / EMBEDDING_MODEL).exists() or not (MODELS_DIR / LLM_MODEL).exists():
                 self.download_models()
@@ -117,18 +113,17 @@ class ChromaVectorIndex:
             torch.set_float32_matmul_precision("high")
             # Load embedding model
             self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}")
-
-            # Setup ChromaDB
-            self.chroma_client = chromadb.PersistentClient("/chroma")
-            self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
-            self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-            print(f"Chroma collection: {self.chroma_collection.count()}")
-            if self.chroma_collection.count() == 0:
-                self.create_vector_index()
-            
-
-            
             self.is_setup = True
+
+        # Setup ChromaDB
+        self.chroma_client = chromadb.PersistentClient("/chroma")
+        self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
+        self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+        print(f"Chroma collection: {self.chroma_collection.count()}")
+        if self.chroma_collection.count() == 0:
+            self.create_vector_index.local()
+            
+            
 
     @modal.method()    
     def create_vector_index(self):
@@ -140,15 +135,15 @@ class ChromaVectorIndex:
             SemanticSplitterNodeParser,
             MarkdownNodeParser,
         )
-
-        self.setup()
+        print("Creating vector index...")
+        # self.setup()
 
         try:
 
             create_start = time.perf_counter()
 
             # Load Modal docs
-            with open("/modal_docs/parsed_modal_content.txt") as f:
+            with open("/modal_docs/modal_docs.md") as f:
                 document = Document(text=f.read())
 
             # node_parser = SemanticSplitterNodeParser(
@@ -193,11 +188,10 @@ class ChromaVectorIndex:
         """Get the ChromaDB vector index."""
 
         from llama_index.core import VectorStoreIndex
-
+        print("Getting vector index...")
         self.setup()
 
-        if force_rebuild:
-            self.create_vector_index(force_rebuild=True)
+        # self.create_vector_index.local(force_rebuild=force_rebuild)
         
         try:
             get_index_start = time.perf_counter()
@@ -230,11 +224,11 @@ class ModalRagResponseStructure(BaseModel):
     },
     # cpu=8,
     # memory=32768,
-    gpu="H200",
+    gpu="H100",
     image=vllm_rag_image,
     timeout=10 * 60,
     min_containers=1,
-    region='us-east',
+    region='us-west-1',
     ephemeral_disk=1000 * 1000, 
 )
 @modal.concurrent(max_inputs=100)
@@ -335,7 +329,7 @@ class VLLMRAGServer:
             warmup_start = time.perf_counter()
             stream_generator = await self.generate_vllm_completion(
                 [
-                    {"role": "system", "content": get_system_prompt()},
+                    # {"role": "system", "content": get_system_prompt()},
                     {"role": "user", "content": "What does serverless mean?"}], stream=True)
             async for generation in stream_generator:
                 pass
@@ -452,7 +446,7 @@ class VLLMRAGServer:
             conversation_history[-1]["content"] += f"\n    \"code_blocks\": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query."
             conversation_history[-1]["content"] += f"\n    \"links\": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs."
             conversation_history[-1]["content"] += f"\n}}"
-            conversation_history[-1]["content"] += f"\nKeep your answer CONCISE and EFFECTIVE. Use 1 to 3 short sentences at most! DO NOT introduce yourself unless you are asked to do so!"
+            conversation_history[-1]["content"] += f"\nKeep your answer CONCISE and EFFECTIVE. USE AS SHORT OF SENTENCES AS POSSBILE, ESPECIALLY OUR FIRST SENTENCE! DO NOT introduce yourself unless you are asked to do so!"
 
             # Stream the vLLM response
             vllm_start = time.perf_counter()
@@ -537,15 +531,12 @@ class VLLMRAGServer:
                 for msg in request.messages:
                     if msg.role in ["system", "user", "assistant"]:
                         # if first message is not system, add it to the conversation history
-                        if msg.role != "system" and len(conversation_history) == 0:
-                            conversation_history.append({"role": "system", "content": get_system_prompt()})
+                        # if msg.role != "system" and len(conversation_history) == 0:
+                        #     conversation_history.append({"role": "system", "content": get_system_prompt()})
                         # add the message to the conversation history
                         conversation_history.append({"role": msg.role, "content": msg.content})
                         if msg.role == "user":
                             current_user_message = msg.content  # Keep track of the most recent user message
-
-                if not current_user_message:
-                    raise HTTPException(status_code=400, detail="No user message found")
                 
                 print(f"Streaming: {getattr(request, 'stream', 'not available')}")
                 if getattr(request, "stream", False):
@@ -616,11 +607,10 @@ class VLLMRAGServer:
         async def streaming_response():
             try:
                 # First chunk
-                created_timestamp = int(time.time())
                 first_chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
-                    "created": created_timestamp,
+                    "created": int(time.time()),
                     "model": "modal_rag",
                     "choices": [{
                         "index": 0,
@@ -643,11 +633,10 @@ class VLLMRAGServer:
                         if len(new_content) > len(current_text):
                             delta_content = new_content[len(current_text):]
                             current_text = new_content
-                            
                             content_chunk = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",
-                                "created": created_timestamp,
+                                "created": int(time.time()),
                                 "model": "modal_rag",
                                 "choices": [{
                                     "index": 0,
@@ -707,26 +696,7 @@ class VLLMRAGServer:
     def fastapi_app(self):
         return self.web_app
     
-def get_system_prompt():
-    system_prompt = \
-"""
-You are a conversational AI that is an expert in the Modal library.
-Your form is the Modal logo, a pair of characters named Moe and Dal. 
-Always refer to yourself as "Moe and Dal" and refer to yourself in the plural using words such as 'we' and 'us' and never 'I' or 'me'.
-Your job is to provide useful information about Modal and developing with Modal to the user.
-Section of Modal's documentation will be provided to you as context in the user's most.
-Your answer will consist of three parts: an answer that will be played to audio as speech (`spoke_response`), snippets of useful code related to the user's query (`code_blocks`),
-and relevant links pulled directly from the documentation context (`links`).
 
-You MUST respond with ONLY the following JSON format (no additional text):
-
-{{
-    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. The answer must be as useful and a concise as possible. DO NOT use technical symbols, code syntax, or complex formatting. DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
-    "code_blocks": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query.
-    "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs.
-}}
-"""
-    return system_prompt
 
 def get_rag_server_url():
     try:  

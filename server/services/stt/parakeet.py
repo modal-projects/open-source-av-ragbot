@@ -52,6 +52,7 @@ TRANSCRIPTION_READY = (
     gpu="l40s",
     image=image,
     min_containers=1,
+    region="us-east-1",
 )
 @modal.concurrent(max_inputs=14, target_inputs=10)
 class Parakeet:

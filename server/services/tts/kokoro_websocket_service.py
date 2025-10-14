@@ -32,7 +32,7 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
-        websocket_url: str = "wss://modal-labs-shababo-dev--streaming-parakeet-transcriber-webapp.modal.run/ws", 
+        websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-websocket-webapp.modal.run/ws", 
         reconnect_on_error: bool = True,
         **kwargs
     ):

@@ -4,10 +4,10 @@
 # Run this script from the root of the pipecat-modal project
 #
 # Usage:
-#   ./deploy_all.sh rag             # Deploy only RAG service
-#   ./deploy_all.sh bot tts         # Deploy only bot and TTS services
-#   ./deploy_all.sh rag stt tts bot # Deploy multiple services
-#   ./deploy_all.sh --all           # Deploy all services
+#   ./ragbot_deploy.sh rag             # Deploy only RAG service
+#   ./ragbot_deploy.sh bot tts         # Deploy only bot and TTS services
+#   ./ragbot_deploy.sh rag stt tts bot # Deploy multiple services
+#   ./ragbot_deploy.sh --all           # Deploy all services
 
 set -e  # Exit on any error
 
@@ -29,9 +29,9 @@ if [[ $# -eq 0 ]]; then
     echo -e "${RED}❌ Error: Please specify services to deploy or use --all${NC}"
     echo ""
     echo "Usage:"
-    echo "  ./deploy_all.sh rag             # Deploy only RAG service"
-    echo "  ./deploy_all.sh bot tts         # Deploy bot and TTS services"
-    echo "  ./deploy_all.sh --all           # Deploy all services"
+    echo "  ./ragbot_deploy.sh rag             # Deploy only RAG service"
+    echo "  ./ragbot_deploy.sh bot tts         # Deploy bot and TTS services"
+    echo "  ./ragbot_deploy.sh --all           # Deploy all services"
     echo ""
     echo "Valid service options: rag, stt, tts, bot"
     exit 1
@@ -108,12 +108,12 @@ if [[ "$DEPLOY_RAG" == "true" ]]; then
 fi
 
 if [[ "$DEPLOY_STT" == "true" ]]; then
-    deploy_service "STT Service" "server.services.stt.kyutai_stt"
+    deploy_service "STT Service" "server.services.stt.streaming_parakeet"
     ((deployed_count++))
 fi
 
 if [[ "$DEPLOY_TTS" == "true" ]]; then
-    deploy_service "TTS Service" "server.services.tts.chatterbox_tts"
+    deploy_service "TTS Service" "server.services.tts.kokoro_tts"
     ((deployed_count++))
 fi
 
@@ -127,6 +127,6 @@ echo "=============================================="
 echo -e "${BLUE}Your Modal apps are now live and ready to use.${NC}"
 echo ""
 echo "Example usage:"
-echo "  ./deploy_all.sh rag                # Deploy only RAG service"  
-echo "  ./deploy_all.sh bot tts            # Deploy bot and TTS services"
-echo "  ./deploy_all.sh --all              # Deploy all services" 
+echo "  ./ragbot_deploy.sh rag                # Deploy only RAG service"  
+echo "  ./ragbot_deploy.sh bot tts            # Deploy bot and TTS services"
+echo "  ./ragbot_deploy.sh --all              # Deploy all services" 

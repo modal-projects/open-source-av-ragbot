@@ -1,10 +1,13 @@
 import asyncio
 from pathlib import Path
 import sys
-import modal
-import socket
+# import socket
 from struct import pack, unpack
 import time
+import re
+
+import modal
+
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
@@ -25,11 +28,11 @@ with image.imports():
     from fastapi.responses import StreamingResponse
     from kokoro import KPipeline
 
-_MODAL_PHONETIC_TEXT = "[Modal](ˈməʊdᵊl)"
-_MOE_PHONETIC_TEXT = "[Moe](moʊ)"
-_DAL_PHONETIC_TEXT = "[Dal](ˈdæl)"
+_MODAL_PHONETIC_TEXT = "[Modal](/məʊdᵊl/)"
+_MOE_PHONETIC_TEXT = "[Moe](/məʊ/)"
+_DAL_PHONETIC_TEXT = "[Dal](/dæl/)" # alt: dæl
 
-kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
+# kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
 
 FORMAT = ('!I', 4)
 async def sendbuffer(writer, b):
@@ -40,7 +43,7 @@ async def sendbuffer(writer, b):
     print(f"Sent data of length {len(b)}")
 
 
-async def recvbuffer(reader, chunk_size: int = 8192):
+async def recvbuffer(reader, chunk_size: int = 1920):
     header = await reader.read(FORMAT[1])
     # print(f"Received header: {header}")
     if not header:
@@ -53,26 +56,26 @@ async def recvbuffer(reader, chunk_size: int = 8192):
     while received_bytes < incoming_bytes: # Read until we have all the data
         data = await reader.read(min(chunk_size, incoming_bytes - received_bytes))
         if not data:
-            yield None
+            continue
         received_bytes += len(data)
         print(f"Received data of length {received_bytes}")
         yield data
 
 @app.cls(
-    gpu="l40s", min_containers=1, region='us-east-1'
+    gpu=["L40S", "A100", "A100-80GB"], min_containers=1, region='us-west'
 )
 # @modal.concurrent(max_inputs=10)
 class KokoroTTS:
     @modal.enter()
     async def load(self):
         # from modal._tunnel import _forward as get_tunnel
-        kokoro_tts_dict.put("server_ready", False)
-        try:
-            self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
-            self.tunnel = await self.tunnel_manager.__aenter__()
-        except Exception as e:
-            print(f"❌ Error starting tunnel: {e}")
-        print(f"Tunnel started: {self.host}:{self.port}")
+        # kokoro_tts_dict.put("server_ready", False)
+        # try:
+        #     self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
+        #     self.tunnel = await self.tunnel_manager.__aenter__()
+        # except Exception as e:
+        #     print(f"❌ Error starting tunnel: {e}")
+        # print(f"Tunnel started: {self.host}:{self.port}")
         try:
         
             self.model = KPipeline(lang_code='a')
@@ -95,10 +98,13 @@ class KokoroTTS:
 
             async def client_handler(reader, writer):
                 print("Started new connection...")
-                asyncio.sleep(0.5)
+                # asyncio.sleep(0.5)
                 while True:
                     prompt = b""
-                    async for chunk in recvbuffer(reader):  
+                    async for chunk in recvbuffer(reader):
+                        if chunk is None:
+                            print("Received None chunk")
+                            continue
                         prompt += chunk
                     
                     if not prompt:
@@ -111,6 +117,7 @@ class KokoroTTS:
 
                     if prompt == "<close>":
                         print("Closing connection...")
+                        await sendbuffer(writer, "<close>".encode("utf-8"))
                         break
                     for chunk in self._stream_tts(prompt):
                         print(f"Sending data of length {len(chunk)}")
@@ -138,25 +145,34 @@ class KokoroTTS:
         return self.tunnel.tcp_socket[0]
     
     @modal.method()
-    async def run(self, id: str):
-        print(f"Run started: {self.host}:{self.port}")
+    async def run(self, id: str, d: modal.Dict):
         
-        print(f"Address put in dict: {self.host}:{self.port}")
+        from modal._tunnel import _forward as get_tunnel
+
+        
+        # print(f"Address put in dict: {self.host}:{self.port}")
         server_task = None
+        # d.put("server_ready", False)
+        try:
+            self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
+            self.tunnel = await self.tunnel_manager.__aenter__()
+        except Exception as e:
+            print(f"❌ Error starting tunnel: {e}")
+        print(f"Tunnel started: {self.host}:{self.port}")
         async def run_server():
             async with self.server:
-                kokoro_tts_dict.put("host", self.host)
-                kokoro_tts_dict.put("port", self.port)
-                kokoro_tts_dict.put("server_ready", True)
+                d.put("host", self.host)
+                d.put("port", self.port)
+                d.put("server_ready", True)
                 await self.server.serve_forever()
         try:
 
             server_task = asyncio.create_task(run_server())
-            running = await kokoro_tts_dict.get.aio(id)
+            running = await d.get.aio(id)
             print(f"Running: {running}")
             while running:
                 await asyncio.sleep(1.0)
-                running = await kokoro_tts_dict.get.aio(id)
+                running = await d.get.aio(id)
                 print(f"Running: {running}")
                 
 
@@ -167,7 +183,7 @@ class KokoroTTS:
             if server_task:
                 server_task.cancel()
                 server_task = None
-            kokoro_tts_dict.put("server_ready", False)
+            d.put("server_ready", False)
 
     @modal.exit()
     async def exit(self):
@@ -188,15 +204,18 @@ class KokoroTTS:
         
     def _stream_tts(self, prompt: str):
 
-        prompt = (
-            prompt
-            .replace(_MODAL_PHONETIC_TEXT, "Modal")
-            .replace(_MODAL_PHONETIC_TEXT, "modal")
-            .replace(_MOE_PHONETIC_TEXT, "Moe")
-            .replace(_MOE_PHONETIC_TEXT, "moe")
-            .replace(_DAL_PHONETIC_TEXT, "Dal")
-            .replace(_DAL_PHONETIC_TEXT, "dal")
-        )
+        
+        # The \b symbol in a regex pattern represents a "word boundary".
+        # It matches the position between a word character (like a letter or number) and a non-word character (like a space or punctuation), 
+        # or the start/end of the string. This ensures that only whole words are matched and replaced, not parts of longer words.
+        prompt = re.sub(r'\bModal\b', _MODAL_PHONETIC_TEXT, prompt)
+        prompt = re.sub(r'\bmodal\b', _MODAL_PHONETIC_TEXT, prompt)
+        prompt = re.sub(r'\bMoe\b', _MOE_PHONETIC_TEXT, prompt)
+        prompt = re.sub(r'\bmoe\b', _MOE_PHONETIC_TEXT, prompt)
+        prompt = re.sub(r'\bDal\b', _DAL_PHONETIC_TEXT, prompt)
+        prompt = re.sub(r'\bdal\b', _DAL_PHONETIC_TEXT, prompt)
+
+        print(f"Phoenticized Prompt: {prompt}")
 
         try:
 
@@ -212,7 +231,7 @@ class KokoroTTS:
             for (gs, ps, chunk) in self.model(
                 prompt, 
                 voice='am_puck',
-                speed = 1.25,
+                speed = 0.90,
             ):
                 if first_chunk_time is None:
                     first_chunk_time = time.time()
@@ -265,7 +284,7 @@ class KokoroTTS:
             final_time = time.time()
             print(f"⏱️  Total streaming time: {final_time - stream_start:.3f} seconds")
             print(f"📊 Total chunks streamed: {chunk_count}")
-            print("✅ Chatterbox streaming complete!")
+            print("✅ KokoroTTS streaming complete!")
 
             
         except Exception as e:

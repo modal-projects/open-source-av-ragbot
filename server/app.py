@@ -13,7 +13,7 @@ bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
     .apt_install("ffmpeg")
     .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.76",
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]",
         "websocket-client",
         "aiofiles"
     )
@@ -28,7 +28,7 @@ MINUTES = 60  # seconds in a minute
     gpu="l40s",
     timeout=30 * MINUTES,
     min_containers=1,
-    region='us-east-1'
+    region='us-west'
 )
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
@@ -40,7 +40,7 @@ async def run_bot(d: modal.Dict):
         RuntimeError: If the bot pipeline fails to start or encounters an error.
     """
     from loguru import logger
-    from pipecat.transports.network.webrtc_connection import (
+    from pipecat.transports.smallwebrtc.connection import (
         IceServer,
         SmallWebRTCConnection,
     )
@@ -84,54 +84,6 @@ web_server_image = (
 )
 
 
-# @app.function(
-#     image=web_server_image,
-# )
-# @modal.asgi_app()
-# def bot_server():
-#     """Create and configure the FastAPI application.
-
-#     This function initializes the FastAPI app with middleware, routes, and lifespan management.
-#     It is decorated to be used as a Modal ASGI app.
-#     """
-#     from fastapi import FastAPI
-#     from fastapi.middleware.cors import CORSMiddleware
-
-#     # Initialize FastAPI app
-#     web_app = FastAPI()
-
-#     # # # setup CORS
-#     web_app.add_middleware(
-#         CORSMiddleware,
-#         allow_origins=["*"],
-#         allow_credentials=True,
-#         allow_methods=["*"],
-#         allow_headers=["*"],
-#     )
-
-#     @web_app.post("/offer")
-#     async def offer(offer: dict):
-
-#         _ICE_SERVERS = [
-#             {
-#                 "urls": "stun:stun.l.google.com:19302",
-#             }
-#         ]
-
-#         with modal.Dict.ephemeral() as d:
-
-#             await d.put.aio("ice_servers", _ICE_SERVERS)
-#             await d.put.aio("offer", offer)
-
-#             run_bot.spawn(d)
-
-#             while True:
-#                 answer = await d.get.aio("answer")
-#                 if answer:
-#                     return answer
-#                 await asyncio.sleep(0.1)
-
-#     return web_app
 
 
 frontend_image = web_server_image.add_local_dir(
