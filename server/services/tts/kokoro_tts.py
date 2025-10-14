@@ -27,6 +27,7 @@ with image.imports():
     import torchaudio as ta 
     from fastapi.responses import StreamingResponse
     from kokoro import KPipeline
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 _MODAL_PHONETIC_TEXT = "[Modal](/məʊdᵊl/)"
 _MOE_PHONETIC_TEXT = "[Moe](/məʊ/)"
@@ -191,15 +192,76 @@ class KokoroTTS:
         print("Tunnel stopped")
     
 
-    @modal.fastapi_endpoint(docs=True, method="POST")
-    async def tts(self, prompt: str):
-        # Return the audio as a streaming response with appropriate MIME type.
-        # This allows for browsers to playback audio directly.
-        return StreamingResponse(
-            content=self._stream_tts(prompt),
-            media_type="audio/wav",
-            headers={"Content-Disposition": 'attachment; filename="output.wav"'},
-        )
+    # @modal.fastapi_endpoint(docs=True, method="POST")
+    # async def tts(self, prompt: str):
+    #     # Return the audio as a streaming response with appropriate MIME type.
+    #     # This allows for browsers to playback audio directly.
+    #     return StreamingResponse(
+    #         content=self._stream_tts(prompt),
+    #         media_type="audio/wav",
+    #         headers={"Content-Disposition": 'attachment; filename="output.wav"'},
+    #     )
+
+    @modal.asgi_app()
+    def webapp(self):
+        
+        web_app = FastAPI()
+
+        @web_app.websocket("/ws")
+        async def run_with_websocket(ws: WebSocket):
+
+            prompt_queue = asyncio.Queue()
+            audio_queue = asyncio.Queue()
+
+            # vad = self.VADIterator(
+            #     self.silero_vad, 
+            #     threshold = 0.4,
+            #     sampling_rate = SAMPLE_RATE,
+            #     min_silence_duration_ms = 500,
+            #     speech_pad_ms = 100,
+            # )
+
+            async def recv_loop(ws, prompt_queue):
+                while True:
+                    data = await ws.receive_text()
+                    prompt = data.strip()
+                    await prompt_queue.put(prompt)
+                    print(f"Received prompt: {prompt}")
+                    
+            async def inference_loop(prompt_queue, audio_queue):
+                while True:
+                    prompt = await prompt_queue.get()
+                    start_time = time.perf_counter()
+                    for chunk in self._stream_tts(prompt):
+                        await audio_queue.put(chunk)
+                    end_time = time.perf_counter()
+                    print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
+
+                        
+            async def send_loop(audio_queue, ws):
+                while True:
+                    audio = await audio_queue.get()
+                    await ws.send_bytes(audio)
+                    print(f"sending audio data: {len(audio)} bytes")
+
+            await ws.accept()
+
+            try:
+                tasks = [
+                    asyncio.create_task(recv_loop(ws, audio_queue)),
+                    asyncio.create_task(inference_loop(prompt_queue, audio_queue)),
+                    asyncio.create_task(send_loop(audio_queue, ws)),
+                ]
+                await asyncio.gather(*tasks)
+            except WebSocketDisconnect:
+                print("WebSocket disconnected")
+                await ws.close(code=1000)
+            except Exception as e:
+                print("Exception:", e)
+                await ws.close(code=1011)  # internal error
+                raise e
+
+        return web_app
 
         
     def _stream_tts(self, prompt: str):

@@ -13,10 +13,12 @@ from pipecat.frames.frames import (
     InterimTranscriptionFrame, 
     UserStartedSpeakingFrame, 
     UserStoppedSpeakingFrame, 
+    TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.stt_service import SegmentedSTTService, STTService
-from pipecat.services.websocket_service import WebsocketService
+from pipecat.services.tts_service import WebsocketTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
 from pipecat.utils.time import time_now_iso8601
@@ -28,17 +30,14 @@ import json
 import modal
 import uuid
 
-class ParakeetSTTService(SegmentedSTTService, WebsocketService):
+class KokoroTTSService(WebsocketTTSService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
         websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-websocket-webapp.modal.run/ws", 
-        reconnect_on_error: bool = True,
         **kwargs
     ):
-        SegmentedSTTService.__init__(self, **kwargs)
-        WebsocketService.__init__(self, reconnect_on_error=reconnect_on_error, **kwargs)
-        self._register_event_handler("on_connection_error")
+        super().__init__(**kwargs)
         self._id = str(uuid.uuid4())
         self._websocket_url = websocket_url
         self._receive_task = None
@@ -81,7 +80,7 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
                 self._websocket_url,
                 # additional_headers={"Authorization": f"Token {self._api_key}"},
             )
-            logger.debug("Connected to Parakeet Websocket")
+            logger.debug("Connected to KokoroTTS Websocket")
         except Exception as e:
             logger.error(f"{self} initialization error: {e}")
             self._websocket = None
@@ -94,14 +93,14 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
 
             if self._websocket:
                 # await self._send_close_stream()
-                logger.debug("Disconnecting from Parakeet Websocket")
+                logger.debug("Disconnecting from KokoroTTS Websocket")
                 await self._websocket.close()
         except Exception as e:
             logger.error(f"{self} error closing websocket: {e}")
 
     async def _send_close_stream(self) -> None:
         if self._websocket:
-            logger.debug("Sending CloseStream message to Parakeet")
+            logger.debug("Sending CloseStream message to KokoroTTS")
             message = {"type": "CloseStream"}
             await self._websocket.send(json.dumps(message))
 
@@ -166,7 +165,7 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
         """Receive and process messages from WebSocket.
         """
         async for message in self._get_websocket():
-            if isinstance(message, str):
+            if isinstance(message, bytes):
                 # msg_dict = json.loads(message)
                 # if msg_dict.get("type") == "final_transcript":
                 #     await self.push_frame(TranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
@@ -178,8 +177,8 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
                 #     await self.push_frame(InterimTranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
                 #     await self._handle_transcription(message, False)
                 #     await self.stop_processing_metrics()
-                await self.push_frame(TranscriptionFrame(message, "", time_now_iso8601()))
-                await self._handle_transcription(message, True)
+                await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
+                # await self._handle_transcription(message, True)
                 await self.stop_processing_metrics()
             else:
                 logger.warning(f"Received non-string message: {type(message)}")
@@ -197,15 +196,15 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
 
         if not self._websocket:
-            logger.error("Not connected to Parakeet.")
-            yield ErrorFrame("Not connected to Parakeet.", fatal=True)
+            logger.error("Not connected to KokoroTTS.")
+            yield ErrorFrame("Not connected to KokoroTTS.", fatal=True)
             return
 
         try:
             await self._websocket.send(audio)
         except Exception as e:
-            logger.error(f"Failed to send audio to Parakeet: {e}")
-            yield ErrorFrame(f"Failed to send audio to Parakeet:  {e}")
+            logger.error(f"Failed to send audio to KokoroTTS: {e}")
+            yield ErrorFrame(f"Failed to send audio to KokoroTTS:  {e}")
             return
 
         yield None

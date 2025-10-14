@@ -54,7 +54,8 @@ from ..services.modal_rag.modal_rag_service import ModalRagLLMService, get_syste
 
 
 # from ..services.tts.chatterbox_service import ChatterboxTTSService
-from ..services.tts.kokoro_service import KokoroTTSService
+# from ..services.tts.kokoro_service import KokoroTTSService
+from ..services.tts.kokoro_websocket_service import KokoroTTSService
 from ..services.tts.text_aggregator import ModalRagTextAggregator
 
 try:
