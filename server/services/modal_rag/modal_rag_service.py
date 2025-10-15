@@ -32,10 +32,18 @@ class ModalRagLLMService(OpenAILLMService):
         await self.start_ttfb_metrics()
         waiting_for_first_chunk = True
         # print(f"🚀 Starting time: {time.perf_counter()}")
+        
         start_time = time.perf_counter()
+        messages = context.get_messages()
+        edited_messages = []
+        for msg in messages[:-1]:
+          if msg['role'] in ["assistant", "system"]:
+            edited_messages.append(msg)
+        edited_messages.append(messages[-1])
+        new_context = OpenAILLMContext(messages=edited_messages)
 
         chunk_stream: AsyncStream[ChatCompletionChunk] = await self._stream_chat_completions_specific_context(
-            context
+            new_context
         )
 
         async for chunk in chunk_stream:

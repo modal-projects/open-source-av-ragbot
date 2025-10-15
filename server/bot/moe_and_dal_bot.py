@@ -57,6 +57,7 @@ from ..services.modal_rag.modal_rag_service import ModalRagLLMService, get_syste
 # from ..services.tts.kokoro_service import KokoroTTSService
 from ..services.tts.kokoro_websocket_service import KokoroTTSService
 from ..services.tts.text_aggregator import ModalRagTextAggregator
+from .modal_rag import ModalRag
 
 try:
     logger.remove(0)
@@ -129,9 +130,12 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         audio_passthrough=True,
     )
 
+    modal_rag = ModalRag(similarity_top_k=5)
+
     # Initialize OpenAI API compatibleLLM service
-    rag = ModalRagLLMService(
-        model="modal-rag",
+    llm = ModalRagLLMService(
+        # model="modal-rag",
+        model="Qwen/Qwen3-4B-Instruct-2507",
         params=OpenAILLMService.InputParams(
             extra={
                 "stream": True,
@@ -153,7 +157,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     # Set up conversation context and management
     # The context_aggregator will automatically collect conversation context
     context = OpenAILLMContext(messages)
-    context_aggregator = rag.create_context_aggregator(
+    context_aggregator = llm.create_context_aggregator(
         context,
         user_params=LLMUserAggregatorParams(aggregation_timeout=0.05),
     )
@@ -176,8 +180,9 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             transport.input(),
             rtvi,
             stt,
+            modal_rag,
             context_aggregator.user(),
-            rag,
+            llm,
             tts,
             # ta,
             transport.output(),

@@ -6,17 +6,32 @@ from pathlib import Path
 
 import modal
 
+MODELS_DIR = Path("/models")
+
 app = modal.App("moe-and-dal-ragbot")
+
+modal_docs_volume = modal.Volume.from_name("modal_docs", create_if_missing=True)
+models_volume = modal.Volume.from_name("models", create_if_missing=True)
+chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=True)
 
 # container specifications for the Pipecat pipeline
 bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
     .apt_install("ffmpeg")
     .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]",
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.90",
         "websocket-client",
-        "aiofiles"
+        "aiofiles",
+        "llama-index",  # ==0.12.41
+        "llama-index-embeddings-huggingface",  # ==0.5.4
+        "fastapi[standard]",  # ==0.115.9
+        "llama-index-vector-stores-chroma",  # ==0.4.1
+        "chromadb",  # ==1.0.11
     )
+    .env({
+        "HF_HUB_ENABLE_HF_TRANSFER": "1",
+        "HF_HOME": str(MODELS_DIR),
+    })
     .add_local_dir("server", remote_path="/root/server")
 )
 
@@ -28,7 +43,12 @@ MINUTES = 60  # seconds in a minute
     gpu="l40s",
     timeout=30 * MINUTES,
     min_containers=1,
-    region='us-east-1'
+    region='us-east-1',
+    volumes={
+        MODELS_DIR: models_volume,
+        "/chroma": chroma_db_volume,
+        "/modal_docs": modal_docs_volume,
+    },
 )
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
