@@ -28,7 +28,7 @@ MINUTES = 60  # seconds in a minute
     gpu="l40s",
     timeout=30 * MINUTES,
     min_containers=1,
-    region='us-west'
+    region='us-east-1'
 )
 async def run_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.

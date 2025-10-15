@@ -1,4 +1,5 @@
 import enum
+import time
 from pipecat.frames.frames import LLMTextFrame
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
@@ -48,6 +49,8 @@ class ModalRagStreamingJsonParser:
         self.spoke_response_complete = False
         self.code_blocks_complete = False
         self.links_complete = False
+
+        self._start_time = time.perf_counter()
 
     async def process_chunk(self, content: str) -> None:
         """Process a chunk of streaming content."""
@@ -193,6 +196,10 @@ class ModalRagStreamingJsonParser:
         """Handle a chunk of the spoke_response as it streams in."""
         # Stream the text immediately for TTS
         await self.service.push_frame(LLMTextFrame(chunk))
+        if self._start_time is not None:
+            # print(f"Spoke response chunk: {chunk}")
+            # print(f"Time taken: {time.perf_counter() - self._start_time:.2f} seconds")
+            self._start_time = time.perf_counter()
 
     async def handle_spoke_response_complete(self, complete_response: str):
         """Handle completion of the spoke_response field."""
@@ -212,30 +219,38 @@ class ModalRagStreamingJsonParser:
 
     async def handle_links_complete(self, links: List[str]):
         """Handle completion of the links array."""
-        import requests
-        # for each link, test it we get a 200 response
+        import httpx
+
+        # for each link, test if we get a 200 response - make this all async!
         good_links = []
-        for link in links:
-            try:
-                response = requests.get(link)
-                if response.status_code != 200:
-                    print(f"Link {link} returned status code {response.status_code}")
-                    # try changing link to start with https://modal.com/docs if it doesn't work
-                    if link.startswith("https://modal.com") and not link.startswith("https://modal.com/docs/"):
-                        link = link.replace("https://modal.com", "https://modal.com/docs")
-                    if link.endswith(".html"):
-                        link = link[:-5]
-                    response = requests.get(link)
-                    if response.status_code != 200:
-                        print(f"Link {link} returned status code {response.status_code}")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for link in links:
+                test_link = link
+                success = False
+
+                try:
+                    response = await client.get(test_link)
+                    if response.status_code == 200:
+                        good_links.append(test_link)
                         continue
                     else:
-                        good_links.append(link)
-                else:
-                    good_links.append(link)
-            except Exception as e:
-                print(f"Error testing link {link}: {e}")
-        
+                        print(f"Link {test_link} returned status code {response.status_code}")
+
+                    # try changing link to start with https://modal.com/docs if it doesn't work
+                    if test_link.startswith("https://modal.com") and not test_link.startswith("https://modal.com/docs/"):
+                        test_link = test_link.replace("https://modal.com", "https://modal.com/docs")
+                    if test_link.endswith(".html"):
+                        test_link = test_link[:-5]
+
+                    response = await client.get(test_link)
+                    if response.status_code == 200:
+                        good_links.append(test_link)
+                        continue
+                    else:
+                        print(f"Link {test_link} returned status code {response.status_code}")
+                except Exception as e:
+                    print(f"Error testing link {test_link}: {e}")
+
         # Send links as structured data
         await self.service.push_frame(RTVIServerMessageFrame(
             data={

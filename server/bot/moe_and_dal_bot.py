@@ -101,7 +101,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         audio_out_sample_rate=_AUDIO_OUTPUT_SAMPLE_RATE,
         # audio_out_10ms_chunks=8,
         # audio_in_filter=NoisereduceFilter(),
-        video_out_enabled=True,
+        video_out_enabled=False,
         video_out_width=1024,
         video_out_height=576,
         video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
@@ -158,12 +158,13 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         user_params=LLMUserAggregatorParams(aggregation_timeout=0.05),
     )
 
-    ta = MoeDalBotAnimation()
+    # ta = MoeDalBotAnimation()
 
     tts = KokoroTTSService(
         # aiohttp_session=session,
         # sample_rate=24000,
         text_aggregator=ModalRagTextAggregator(),
+        # pause_frame_processing=True,
     )
 
     # RTVI events for Pipecat client UI
@@ -178,7 +179,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             context_aggregator.user(),
             rag,
             tts,
-            ta,
+            # ta,
             transport.output(),
             context_aggregator.assistant(),
         ]

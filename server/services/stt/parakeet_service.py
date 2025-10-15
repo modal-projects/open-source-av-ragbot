@@ -180,19 +180,21 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
                 #     await self.stop_processing_metrics()
                 await self.push_frame(TranscriptionFrame(message, "", time_now_iso8601()))
                 await self._handle_transcription(message, True)
+                await self.stop_ttfb_metrics()
                 await self.stop_processing_metrics()
+                print(f"Received transcription: {message}")
             else:
                 logger.warning(f"Received non-string message: {type(message)}")
 
-    async def start_metrics(self):
-        """Start TTFB and processing metrics collection."""
-        # TTFB (Time To First Byte) metrics are currently disabled for Deepgram Flux.
-        # Ideally, TTFB should measure the time from when a user starts speaking
-        # until we receive the first transcript. However, Deepgram Flux delivers
-        # both the "user started speaking" event and the first transcript simultaneously,
-        # making this timing measurement meaningless in this context.
-        await self.start_ttfb_metrics()
-        await self.start_processing_metrics()
+    # async def start_metrics(self):
+    #     """Start TTFB and processing metrics collection."""
+    #     # TTFB (Time To First Byte) metrics are currently disabled for Deepgram Flux.
+    #     # Ideally, TTFB should measure the time from when a user starts speaking
+    #     # until we receive the first transcript. However, Deepgram Flux delivers
+    #     # both the "user started speaking" event and the first transcript simultaneously,
+    #     # making this timing measurement meaningless in this context.
+    #     await self.start_ttfb_metrics()
+    #     await self.start_processing_metrics()
     
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
 
@@ -200,7 +202,7 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
             logger.error("Not connected to Parakeet.")
             yield ErrorFrame("Not connected to Parakeet.", fatal=True)
             return
-
+        await self.start_ttfb_metrics()
         try:
             await self._websocket.send(audio)
         except Exception as e:

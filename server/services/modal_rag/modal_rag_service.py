@@ -55,7 +55,8 @@ class ModalRagLLMService(OpenAILLMService):
                     print("received first chunk")
                 # print(f"🚀 Stopping time: {time.perf_counter()}")
                 # print(f"🚀 Content: {chunk.choices[0].delta.content}")
-                    print(f"🚀 Time taken: {time.perf_counter() - start_time:.2f} seconds")
+                # print(f"🚀 Time taken: {time.perf_counter() - start_time:.2f} seconds")
+                # start_time = time.perf_counter()
                 # Process the content through our streaming JSON parser
                 await self.json_parser.process_chunk(chunk.choices[0].delta.content)
         

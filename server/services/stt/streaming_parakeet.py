@@ -75,14 +75,13 @@ with image.imports():
     volumes={"/cache": model_cache}, 
     gpu=["L40S", "A100", "A100-80GB"], 
     image=image,
-    # enable_memory_snapshot=True,
-    # experimental_options={"enable_gpu_snapshot": True},
-    min_containers=1,
-    region='us-west',
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
+    region='us-east-1',
 )
 @modal.concurrent(max_inputs=20)
 class Transcriber:
-    @modal.enter()
+    @modal.enter(snap=True)
     def load(self):
 
 

@@ -63,11 +63,15 @@ async def recvbuffer(reader, chunk_size: int = 1920):
         yield data
 
 @app.cls(
-    gpu=["L40S", "A100", "A100-80GB"], min_containers=1, region='us-west'
+    gpu=["L40S", "A100", "A100-80GB"],
+    min_containers=1, 
+    region='us-east-1',
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 # @modal.concurrent(max_inputs=10)
 class KokoroTTS:
-    @modal.enter()
+    @modal.enter(snap=True)
     async def load(self):
         # from modal._tunnel import _forward as get_tunnel
         # kokoro_tts_dict.put("server_ready", False)
@@ -97,99 +101,99 @@ class KokoroTTS:
             # self.sock.bind(("0.0.0.0", self.port))
             # self.sock.listen(1)
 
-            async def client_handler(reader, writer):
-                print("Started new connection...")
-                # asyncio.sleep(0.5)
-                while True:
-                    prompt = b""
-                    async for chunk in recvbuffer(reader):
-                        if chunk is None:
-                            print("Received None chunk")
-                            continue
-                        prompt += chunk
+            # async def client_handler(reader, writer):
+            #     print("Started new connection...")
+            #     # asyncio.sleep(0.5)
+            #     while True:
+            #         prompt = b""
+            #         async for chunk in recvbuffer(reader):
+            #             if chunk is None:
+            #                 print("Received None chunk")
+            #                 continue
+            #             prompt += chunk
                     
-                    if not prompt:
-                        await asyncio.sleep(0.001)
-                        continue
-                    prompt = prompt.decode("utf-8").strip()
+            #         if not prompt:
+            #             await asyncio.sleep(0.001)
+            #             continue
+            #         prompt = prompt.decode("utf-8").strip()
                     
 
-                    print(f"Received prompt: {prompt}")
+            #         print(f"Received prompt: {prompt}")
 
-                    if prompt == "<close>":
-                        print("Closing connection...")
-                        await sendbuffer(writer, "<close>".encode("utf-8"))
-                        break
-                    for chunk in self._stream_tts(prompt):
-                        print(f"Sending data of length {len(chunk)}")
-                        await sendbuffer(writer, chunk)
-                    await sendbuffer(writer, "<tts_end>".encode("utf-8"))
+            #         if prompt == "<close>":
+            #             print("Closing connection...")
+            #             await sendbuffer(writer, "<close>".encode("utf-8"))
+            #             break
+            #         for chunk in self._stream_tts(prompt):
+            #             print(f"Sending data of length {len(chunk)}")
+            #             await sendbuffer(writer, chunk)
+            #         await sendbuffer(writer, "<tts_end>".encode("utf-8"))
 
-                writer.close()
-                await writer.wait_closed()
-                print("Connection closed")
+            #     writer.close()
+            #     await writer.wait_closed()
+            #     print("Connection closed")
 
-            self.server = await asyncio.start_server(client_handler, host='0.0.0.0', port=8000)
-            addrs = ', '.join(str(sock.getsockname()) for sock in self.server.sockets)
-            print(f'Serving on {addrs}')
+            # self.server = await asyncio.start_server(client_handler, host='0.0.0.0', port=8000)
+            # addrs = ', '.join(str(sock.getsockname()) for sock in self.server.sockets)
+            # print(f'Serving on {addrs}')
 
         except Exception as e:
             self.exit()
             raise e
         
-    @property
-    def port(self):
-        return self.tunnel.tcp_socket[1]
+    # @property
+    # def port(self):
+    #     return self.tunnel.tcp_socket[1]
     
-    @property
-    def host(self):
-        return self.tunnel.tcp_socket[0]
+    # @property
+    # def host(self):
+    #     return self.tunnel.tcp_socket[0]
     
-    @modal.method()
-    async def run(self, id: str, d: modal.Dict):
+    # @modal.method()
+    # async def run(self, id: str, d: modal.Dict):
         
-        from modal._tunnel import _forward as get_tunnel
+    #     from modal._tunnel import _forward as get_tunnel
 
         
-        # print(f"Address put in dict: {self.host}:{self.port}")
-        server_task = None
-        # d.put("server_ready", False)
-        try:
-            self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
-            self.tunnel = await self.tunnel_manager.__aenter__()
-        except Exception as e:
-            print(f"❌ Error starting tunnel: {e}")
-        print(f"Tunnel started: {self.host}:{self.port}")
-        async def run_server():
-            async with self.server:
-                d.put("host", self.host)
-                d.put("port", self.port)
-                d.put("server_ready", True)
-                await self.server.serve_forever()
-        try:
+    #     # print(f"Address put in dict: {self.host}:{self.port}")
+    #     server_task = None
+    #     # d.put("server_ready", False)
+    #     try:
+    #         self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
+    #         self.tunnel = await self.tunnel_manager.__aenter__()
+    #     except Exception as e:
+    #         print(f"❌ Error starting tunnel: {e}")
+    #     print(f"Tunnel started: {self.host}:{self.port}")
+    #     async def run_server():
+    #         async with self.server:
+    #             d.put("host", self.host)
+    #             d.put("port", self.port)
+    #             d.put("server_ready", True)
+    #             await self.server.serve_forever()
+    #     try:
 
-            server_task = asyncio.create_task(run_server())
-            running = await d.get.aio(id)
-            print(f"Running: {running}")
-            while running:
-                await asyncio.sleep(1.0)
-                running = await d.get.aio(id)
-                print(f"Running: {running}")
+    #         server_task = asyncio.create_task(run_server())
+    #         running = await d.get.aio(id)
+    #         print(f"Running: {running}")
+    #         while running:
+    #             await asyncio.sleep(1.0)
+    #             running = await d.get.aio(id)
+    #             print(f"Running: {running}")
                 
 
-        except Exception as e:
-            print(f"❌ Error in run: {e}")
-            raise e
-        finally:
-            if server_task:
-                server_task.cancel()
-                server_task = None
-            d.put("server_ready", False)
+    #     except Exception as e:
+    #         print(f"❌ Error in run: {e}")
+    #         raise e
+    #     finally:
+    #         if server_task:
+    #             server_task.cancel()
+    #             server_task = None
+    #         d.put("server_ready", False)
 
-    @modal.exit()
-    async def exit(self):
-        await self.tunnel_manager.__aexit__(*sys.exc_info())
-        print("Tunnel stopped")
+    # @modal.exit()
+    # async def exit(self):
+    #     await self.tunnel_manager.__aexit__(*sys.exc_info())
+    #     print("Tunnel stopped")
     
 
     # @modal.fastapi_endpoint(docs=True, method="POST")
@@ -231,9 +235,11 @@ class KokoroTTS:
             async def inference_loop(prompt_queue, audio_queue):
                 while True:
                     prompt = await prompt_queue.get()
+                    print(f"Received prompt: {prompt}")
                     start_time = time.perf_counter()
                     for chunk in self._stream_tts(prompt):
                         await audio_queue.put(chunk)
+                        print(f"Sending audio data to queue: {len(chunk)} bytes")
                     end_time = time.perf_counter()
                     print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
 
@@ -248,7 +254,7 @@ class KokoroTTS:
 
             try:
                 tasks = [
-                    asyncio.create_task(recv_loop(ws, audio_queue)),
+                    asyncio.create_task(recv_loop(ws, prompt_queue)),
                     asyncio.create_task(inference_loop(prompt_queue, audio_queue)),
                     asyncio.create_task(send_loop(audio_queue, ws)),
                 ]
@@ -293,7 +299,7 @@ class KokoroTTS:
             for (gs, ps, chunk) in self.model(
                 prompt, 
                 voice='am_puck',
-                speed = 0.90,
+                speed = 1.1,
             ):
                 if first_chunk_time is None:
                     first_chunk_time = time.time()

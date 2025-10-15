@@ -34,7 +34,7 @@ class KokoroTTSService(WebsocketTTSService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
-        websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-websocket-webapp.modal.run/ws", 
+        websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-kokorotts-webapp.modal.run/ws", 
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -166,20 +166,10 @@ class KokoroTTSService(WebsocketTTSService):
         """
         async for message in self._get_websocket():
             if isinstance(message, bytes):
-                # msg_dict = json.loads(message)
-                # if msg_dict.get("type") == "final_transcript":
-                #     await self.push_frame(TranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
-                #     await self._handle_transcription(message, True)
-                #     await self.stop_processing_metrics()
-                #     await self.push_frame(UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
-                #     await self.push_frame(UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
-                # elif msg_dict.get("type") == "realtime_transcript":
-                #     await self.push_frame(InterimTranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
-                #     await self._handle_transcription(message, False)
-                #     await self.stop_processing_metrics()
+                await self.stop_ttfb_metrics()
                 await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
-                # await self._handle_transcription(message, True)
-                await self.stop_processing_metrics()
+                print(f"Received audio data of length {len(message)} bytes")
+                # await self.stop_processing_metrics()
             else:
                 logger.warning(f"Received non-string message: {type(message)}")
 
@@ -193,7 +183,7 @@ class KokoroTTSService(WebsocketTTSService):
         await self.start_ttfb_metrics()
         await self.start_processing_metrics()
     
-    async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
+    async def run_tts(self, prompt: str) -> AsyncGenerator[Frame, None]:
 
         if not self._websocket:
             logger.error("Not connected to KokoroTTS.")
@@ -201,7 +191,7 @@ class KokoroTTSService(WebsocketTTSService):
             return
 
         try:
-            await self._websocket.send(audio)
+            await self._websocket.send(prompt)
         except Exception as e:
             logger.error(f"Failed to send audio to KokoroTTS: {e}")
             yield ErrorFrame(f"Failed to send audio to KokoroTTS:  {e}")
@@ -210,30 +200,3 @@ class KokoroTTSService(WebsocketTTSService):
         yield None
 
     
-        
-        # print("🔥 Starting STT...")
-        # print(f"🔥 Audio length: {len(audio)} bytes")
-        # await self.start_ttfb_metrics()
-        # try:
-        #     await self.start_processing_metrics()
-        #     # await self.start_ttfb_metrics()
-
-        #     response = await self.parakeet.transcribe.remote.aio(audio)
-
-        #     text = response.strip()
-
-        #     if text:
-        #         await self.stop_ttfb_metrics()
-        #         await self.stop_processing_metrics()
-
-                
-        #         # await self._handle_transcription(response, True)
-        #         logger.debug(f"Transcription: [{response}]")
-        #         yield TranscriptionFrame(response, "", time_now_iso8601())
-        #     # else:
-        #         # logger.warning("Received empty transcription from API")
-
-        # except Exception as e:
-        #     logger.exception(f"Exception during transcription: {e}")
-        #     yield ErrorFrame(f"Error during transcription: {str(e)}")
-
