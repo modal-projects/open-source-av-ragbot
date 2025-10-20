@@ -49,6 +49,7 @@ from server.bot.animation import MoeDalBotAnimation, get_frames
 # from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
 # from ..services.stt.kyutai_service import KyutaiSTTService
 from ..services.stt.parakeet_service import ParakeetSTTService
+from ..services.stt.streaming_parakeet_tunnel_service import ModalWebsocketSTTService
 
 from ..services.modal_rag.modal_rag_service import ModalRagLLMService, get_system_prompt
 
@@ -103,18 +104,18 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         # audio_out_10ms_chunks=8,
         # audio_in_filter=NoisereduceFilter(),
         video_out_enabled=False,
-        video_out_width=1024,
-        video_out_height=576,
-        video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
+        # video_out_width=1024,
+        # video_out_height=576,
+        # video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
         vad_analyzer=SileroVADAnalyzer(
             params=VADParams(
                 stop_secs=0.2)
         ),
         turn_analyzer=LocalSmartTurnAnalyzerV3(
             params=SmartTurnParams(
-                stop_secs=0.250,
-                pre_speech_ms=0.0,
-                max_duration_secs=8.0
+                # stop_secs=0.500,
+                # pre_speech_ms=0.0,
+                # max_duration_secs=8.0
             )
         ),
     )

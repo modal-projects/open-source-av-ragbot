@@ -84,14 +84,14 @@ from pipecat.frames.frames import Frame, TranscriptionFrame
 class ChromaVectorIndex:
     is_setup: bool = False
 
-    # Setup function
-    def setup_rag_system(self):
-        """Setup the complete RAG system."""
-        print("Setting up RAG system...")
-        self.setup()
-        self.create_vector_index.local()
-        print("RAG system setup complete!")
+    def __init__(self):
+        self.is_setup = False
+        self.embedding = None
+        self.chroma_client = None
+        self.chroma_collection = None
+        self.vector_store = None
 
+        self.setup()
 
     def download_model(self):
         from huggingface_hub import snapshot_download
@@ -121,7 +121,7 @@ class ChromaVectorIndex:
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
         print(f"Chroma collection: {self.chroma_collection.count()}")
         if self.chroma_collection.count() == 0:
-            self.create_vector_index.local()
+            self.create_vector_index()
             
             
 
@@ -227,7 +227,7 @@ class ModalRag(FrameProcessor):
 
             rag_start = time.perf_counter()
             try:
-                retrieved_nodes = self.retriever.retrieve(frame_text)
+                retrieved_nodes = await self.retriever.aretrieve(frame_text)
                 # Filter out nodes with None text and handle gracefully
                 valid_texts = []
                 for node_index,node in enumerate(retrieved_nodes):

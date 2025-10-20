@@ -17,7 +17,16 @@ chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=
 # container specifications for the Pipecat pipeline
 bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
-    .apt_install("ffmpeg")
+    .apt_install(
+        "git",
+        "ffmpeg",
+        "libogg-dev",
+        "libvorbis-dev",
+        "libopus-dev",
+        "libopusfile-dev",
+        "libopusenc-dev",
+        "libflac-dev",
+        )
     .pip_install(
         "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.90",
         "websocket-client",
@@ -27,6 +36,7 @@ bot_image = (
         "fastapi[standard]",  # ==0.115.9
         "llama-index-vector-stores-chroma",  # ==0.4.1
         "chromadb",  # ==1.0.11
+        "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
     )
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",

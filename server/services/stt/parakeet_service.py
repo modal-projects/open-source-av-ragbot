@@ -15,7 +15,7 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame, 
 )
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.stt_service import SegmentedSTTService, STTService
+from pipecat.services.stt_service import SegmentedSTTService, WebsocketSTTService
 from pipecat.services.websocket_service import WebsocketService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
@@ -32,15 +32,18 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
-        websocket_url: str = "wss://modal-labs-shababo-dev--streaming-parakeet-transcriber-webapp.modal.run/ws", 
+        # websocket_url: str = "wss://modal-labs-shababo-dev--streaming-parakeet-transcriber-webapp.modal.run/ws", 
+        # websocket_url: str = "wss://ta-01k7q7evwx07rsjz4zkbtan5g2-8000.wo-4ea1d6twzn97fk9ri36r0fqrm.w.modal.host/ws", 
         reconnect_on_error: bool = True,
         **kwargs
     ):
         SegmentedSTTService.__init__(self, **kwargs)
         WebsocketService.__init__(self, reconnect_on_error=reconnect_on_error, **kwargs)
         self._register_event_handler("on_connection_error")
+        super().__init__(**kwargs)
         self._id = str(uuid.uuid4())
-        self._websocket_url = websocket_url
+        parakeet_dict = modal.Dict.from_name("parakeet-dict", create_if_missing=True)
+        self._websocket_url = parakeet_dict.get("websocket_url")
         self._receive_task = None
 
     async def _report_error(self, error: ErrorFrame):

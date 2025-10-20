@@ -1,5 +1,6 @@
 
 
+import traceback
 from typing import AsyncGenerator, Optional
 from loguru import logger
 
@@ -29,19 +30,25 @@ import json
 
 import modal
 import uuid
+import base64
+from pyogg import OpusDecoder
 
 class KokoroTTSService(WebsocketTTSService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
-        websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-kokorotts-webapp.modal.run/ws", 
+        # websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-kokorotts-webapp.modal.run/ws", 
+        websocket_url: str = "wss://30fq5i3jeaicmk.r447.modal.host/ws",
         **kwargs
     ):
         super().__init__(**kwargs)
         self._id = str(uuid.uuid4())
-        self._websocket_url = websocket_url
+        tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
+        self._websocket_url = tts_dict.get("websocket_url")
         self._receive_task = None
-
+        self.opus_decoder = OpusDecoder()
+        self.opus_decoder.set_channels(1)
+        self.opus_decoder.set_sampling_frequency(24000)
     async def _report_error(self, error: ErrorFrame):
         await self._call_event_handler("on_connection_error", error.error)
         await self.push_error(error)
@@ -120,13 +127,6 @@ class KokoroTTSService(WebsocketTTSService):
             return self._websocket
         raise Exception("Websocket not connected")
 
-    @traced_stt
-    async def _handle_transcription(
-        self, transcript: str, is_final: bool, language: Optional[Language] = None
-    ):
-        """Handle a transcription result with tracing."""
-        pass
-
     def can_generate_metrics(self) -> bool:
         """Indicate that this service can generate usage metrics."""
         return True
@@ -165,13 +165,21 @@ class KokoroTTSService(WebsocketTTSService):
         """Receive and process messages from WebSocket.
         """
         async for message in self._get_websocket():
-            if isinstance(message, bytes):
+            # if isinstance(message, str):
+            try:
                 await self.stop_ttfb_metrics()
+                # decoded_message = self.opus_decoder.decode(memoryview(bytearray(message)))
+                # await self.push_frame(TTSAudioRawFrame(bytes(decoded_message), self.sample_rate, 1))
                 await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
                 print(f"Received audio data of length {len(message)} bytes")
+            except Exception as e:
+                logger.error(f"Error decoding audio: {e}:{traceback.format_exc()}")
+                # yield ErrorFrame(f"Error decoding audio: {e}")
+                # return
+                raise e
                 # await self.stop_processing_metrics()
-            else:
-                logger.warning(f"Received non-string message: {type(message)}")
+            # else:
+            #     logger.warning(f"Received non-string message: {type(message)}")
 
     async def start_metrics(self):
         """Start TTFB and processing metrics collection."""
