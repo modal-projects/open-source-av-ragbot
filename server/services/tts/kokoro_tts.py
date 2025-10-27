@@ -18,12 +18,12 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install(
         "git",
-        "libogg-dev",
-        "libvorbis-dev",
-        "libopus-dev",
-        "libopusfile-dev",
-        "libopusenc-dev",
-        "libflac-dev",
+        # "libogg-dev",
+        # "libvorbis-dev",
+        # "libopus-dev",
+        # "libopusfile-dev",
+        # "libopusenc-dev",
+        # "libflac-dev",
     )
     .uv_pip_install(
         "kokoro>=0.9.4",
@@ -32,7 +32,7 @@ image = (
         "torchaudio",
         "transformers",
         "torch",
-        "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
+        # "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
         "uvicorn[standard]",
     )
     .uv_pip_install(
@@ -40,7 +40,7 @@ image = (
     )
     # .add_local_dir(Path(__file__).parent / "assets", "/voice_samples")
 )
-app = modal.App("kokoro-tts", image=image)
+app = modal.App("kokoro-tts")
 
 with image.imports():
     import torchaudio as ta 
@@ -49,6 +49,10 @@ with image.imports():
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
     # from pyogg import OpusEncoder
     import librosa
+    import threading
+    import uvicorn
+    from fastapi import FastAPI
+    # from pyogg import OpusEncoder
     
 
 _MODAL_PHONETIC_TEXT = "[Modal](/məʊdᵊl/)"
@@ -59,6 +63,7 @@ kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True
 
 
 @app.cls(
+    image=image,
     gpu=["L40S", "A100", "A100-80GB"],
     min_containers=1, 
     region='us-east-1',
@@ -70,11 +75,7 @@ class KokoroTTS:
     @modal.enter()
     async def load(self):
 
-        import threading
-
-        import uvicorn
-        from fastapi import FastAPI
-        from pyogg import OpusEncoder
+        
         
         # from modal._tunnel import _forward as get_tunnel
         # kokoro_tts_dict.put("server_ready", False)
@@ -101,10 +102,10 @@ class KokoroTTS:
             print("✅ Model warmed up!")
 
             # Create an Opus encoder
-            self.opus_encoder = OpusEncoder()
-            self.opus_encoder.set_application("audio")
-            self.opus_encoder.set_sampling_frequency(24000)
-            self.opus_encoder.set_channels(1)
+            # self.opus_encoder = OpusEncoder()
+            # self.opus_encoder.set_application("audio")
+            # self.opus_encoder.set_sampling_frequency(24000)
+            # self.opus_encoder.set_channels(1)
 
             desired_frame_duration = 60/1000 # milliseconds
             self.desired_frame_size = int(desired_frame_duration * 24000)
@@ -394,7 +395,7 @@ class KokoroTTS:
             
             for (gs, ps, chunk) in self.model(
                 prompt, 
-                voice='af_heart',
+                voice='am_puck',
                 speed = 1.2,
             ):
                 if first_chunk_time is None:

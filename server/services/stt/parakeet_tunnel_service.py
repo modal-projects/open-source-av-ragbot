@@ -1,6 +1,5 @@
 
 
-import traceback
 from typing import AsyncGenerator, Optional
 from loguru import logger
 
@@ -14,12 +13,10 @@ from pipecat.frames.frames import (
     InterimTranscriptionFrame, 
     UserStartedSpeakingFrame, 
     UserStoppedSpeakingFrame, 
-    TTSAudioRawFrame,
-    TTSStartedFrame,
-    TTSStoppedFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.tts_service import WebsocketTTSService
+from pipecat.services.stt_service import SegmentedSTTService, STTService
+from pipecat.services.websocket_service import WebsocketService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
 from pipecat.utils.time import time_now_iso8601
@@ -30,25 +27,22 @@ import json
 
 import modal
 import uuid
-import base64
-# from pyogg import OpusDecoder
 
-class KokoroTTSService(WebsocketTTSService):
+class ParakeetSTTService(SegmentedSTTService, WebsocketService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
-        # websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-kokorotts-webapp.modal.run/ws", 
-        websocket_url: str = "wss://30fq5i3jeaicmk.r447.modal.host/ws",
+        websocket_url: str = "wss://modal-labs-shababo-dev--streaming-parakeet-transcriber-webapp.modal.run/ws", 
+        reconnect_on_error: bool = True,
         **kwargs
     ):
-        super().__init__(**kwargs)
+        SegmentedSTTService.__init__(self, **kwargs)
+        WebsocketService.__init__(self, reconnect_on_error=reconnect_on_error, **kwargs)
+        self._register_event_handler("on_connection_error")
         self._id = str(uuid.uuid4())
-        tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
-        self._websocket_url = tts_dict.get("websocket_url")
+        self._websocket_url = websocket_url
         self._receive_task = None
-        # self.opus_decoder = OpusDecoder()
-        # self.opus_decoder.set_channels(1)
-        # self.opus_decoder.set_sampling_frequency(24000)
+
     async def _report_error(self, error: ErrorFrame):
         await self._call_event_handler("on_connection_error", error.error)
         await self.push_error(error)
@@ -87,7 +81,7 @@ class KokoroTTSService(WebsocketTTSService):
                 self._websocket_url,
                 # additional_headers={"Authorization": f"Token {self._api_key}"},
             )
-            logger.debug("Connected to KokoroTTS Websocket")
+            logger.debug("Connected to Parakeet Websocket")
         except Exception as e:
             logger.error(f"{self} initialization error: {e}")
             self._websocket = None
@@ -100,14 +94,14 @@ class KokoroTTSService(WebsocketTTSService):
 
             if self._websocket:
                 # await self._send_close_stream()
-                logger.debug("Disconnecting from KokoroTTS Websocket")
+                logger.debug("Disconnecting from Parakeet Websocket")
                 await self._websocket.close()
         except Exception as e:
             logger.error(f"{self} error closing websocket: {e}")
 
     async def _send_close_stream(self) -> None:
         if self._websocket:
-            logger.debug("Sending CloseStream message to KokoroTTS")
+            logger.debug("Sending CloseStream message to Parakeet")
             message = {"type": "CloseStream"}
             await self._websocket.send(json.dumps(message))
 
@@ -126,6 +120,13 @@ class KokoroTTSService(WebsocketTTSService):
         if self._websocket:
             return self._websocket
         raise Exception("Websocket not connected")
+
+    @traced_stt
+    async def _handle_transcription(
+        self, transcript: str, is_final: bool, language: Optional[Language] = None
+    ):
+        """Handle a transcription result with tracing."""
+        pass
 
     def can_generate_metrics(self) -> bool:
         """Indicate that this service can generate usage metrics."""
@@ -165,46 +166,77 @@ class KokoroTTSService(WebsocketTTSService):
         """Receive and process messages from WebSocket.
         """
         async for message in self._get_websocket():
-            # if isinstance(message, str):
-            try:
+            if isinstance(message, str):
+                # msg_dict = json.loads(message)
+                # if msg_dict.get("type") == "final_transcript":
+                #     await self.push_frame(TranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
+                #     await self._handle_transcription(message, True)
+                #     await self.stop_processing_metrics()
+                #     await self.push_frame(UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+                #     await self.push_frame(UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+                # elif msg_dict.get("type") == "realtime_transcript":
+                #     await self.push_frame(InterimTranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
+                #     await self._handle_transcription(message, False)
+                #     await self.stop_processing_metrics()
+                await self.push_frame(TranscriptionFrame(message, "", time_now_iso8601()))
+                await self._handle_transcription(message, True)
                 await self.stop_ttfb_metrics()
-                # decoded_message = self.opus_decoder.decode(memoryview(bytearray(message)))
-                # await self.push_frame(TTSAudioRawFrame(bytes(decoded_message), self.sample_rate, 1))
-                await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
-                print(f"Received audio data of length {len(message)} bytes")
-            except Exception as e:
-                logger.error(f"Error decoding audio: {e}:{traceback.format_exc()}")
-                # yield ErrorFrame(f"Error decoding audio: {e}")
-                # return
-                raise e
-                # await self.stop_processing_metrics()
-            # else:
-            #     logger.warning(f"Received non-string message: {type(message)}")
+                await self.stop_processing_metrics()
+                print(f"Received transcription: {message}")
+            else:
+                logger.warning(f"Received non-string message: {type(message)}")
 
-    async def start_metrics(self):
-        """Start TTFB and processing metrics collection."""
-        # TTFB (Time To First Byte) metrics are currently disabled for Deepgram Flux.
-        # Ideally, TTFB should measure the time from when a user starts speaking
-        # until we receive the first transcript. However, Deepgram Flux delivers
-        # both the "user started speaking" event and the first transcript simultaneously,
-        # making this timing measurement meaningless in this context.
-        await self.start_ttfb_metrics()
-        await self.start_processing_metrics()
+    # async def start_metrics(self):
+    #     """Start TTFB and processing metrics collection."""
+    #     # TTFB (Time To First Byte) metrics are currently disabled for Deepgram Flux.
+    #     # Ideally, TTFB should measure the time from when a user starts speaking
+    #     # until we receive the first transcript. However, Deepgram Flux delivers
+    #     # both the "user started speaking" event and the first transcript simultaneously,
+    #     # making this timing measurement meaningless in this context.
+    #     await self.start_ttfb_metrics()
+    #     await self.start_processing_metrics()
     
-    async def run_tts(self, prompt: str) -> AsyncGenerator[Frame, None]:
+    async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
 
         if not self._websocket:
-            logger.error("Not connected to KokoroTTS.")
-            yield ErrorFrame("Not connected to KokoroTTS.", fatal=True)
+            logger.error("Not connected to Parakeet.")
+            yield ErrorFrame("Not connected to Parakeet.", fatal=True)
             return
-
+        await self.start_ttfb_metrics()
         try:
-            await self._websocket.send(prompt)
+            await self._websocket.send(audio)
         except Exception as e:
-            logger.error(f"Failed to send audio to KokoroTTS: {e}")
-            yield ErrorFrame(f"Failed to send audio to KokoroTTS:  {e}")
+            logger.error(f"Failed to send audio to Parakeet: {e}")
+            yield ErrorFrame(f"Failed to send audio to Parakeet:  {e}")
             return
 
         yield None
 
     
+        
+        # print("🔥 Starting STT...")
+        # print(f"🔥 Audio length: {len(audio)} bytes")
+        # await self.start_ttfb_metrics()
+        # try:
+        #     await self.start_processing_metrics()
+        #     # await self.start_ttfb_metrics()
+
+        #     response = await self.parakeet.transcribe.remote.aio(audio)
+
+        #     text = response.strip()
+
+        #     if text:
+        #         await self.stop_ttfb_metrics()
+        #         await self.stop_processing_metrics()
+
+                
+        #         # await self._handle_transcription(response, True)
+        #         logger.debug(f"Transcription: [{response}]")
+        #         yield TranscriptionFrame(response, "", time_now_iso8601())
+        #     # else:
+        #         # logger.warning("Received empty transcription from API")
+
+        # except Exception as e:
+        #     logger.exception(f"Exception during transcription: {e}")
+        #     yield ErrorFrame(f"Error during transcription: {str(e)}")
+

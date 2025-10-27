@@ -103,12 +103,12 @@ echo -e "${BLUE}Starting deployment process...${NC}"
 deployed_count=0
 
 if [[ "$DEPLOY_RAG" == "true" ]]; then
-    deploy_service "RAG Service" "server.services.modal_rag.vllm_rag_server"
+    deploy_service "RAG Service" "server.services.modal_rag.vllm_server"
     ((deployed_count++))
 fi
 
 if [[ "$DEPLOY_STT" == "true" ]]; then
-    deploy_service "STT Service" "server.services.stt.streaming_parakeet"
+    deploy_service "STT Service" "server.services.stt.streaming_parakeet_tunnel"
     ((deployed_count++))
 fi
 

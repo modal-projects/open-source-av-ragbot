@@ -18,3 +18,5 @@ node_modules
 *.html
 *.mp3
 *.zip
+
+_old/**

@@ -13,14 +13,16 @@ from pipecat.frames.frames import (
     InterimTranscriptionFrame, 
     UserStartedSpeakingFrame, 
     UserStoppedSpeakingFrame, 
-    # TTSSpeakFrame
+    AudioRawFrame,
+    InputAudioRawFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.stt_service import SegmentedSTTService, WebsocketSTTService
+from pipecat.services.stt_service import SegmentedSTTService, STTService, WebsocketSTTService
 from pipecat.services.websocket_service import WebsocketService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.tracing.service_decorators import traced_stt
 from pipecat.utils.time import time_now_iso8601
+from pipecat.audio.resamplers.resampy_resampler import ResampyResampler
 
 from websockets.asyncio.client import connect as websocket_connect
 from websockets.protocol import State
@@ -29,27 +31,27 @@ import json
 import modal
 import uuid
 
-class ParakeetSTTService(SegmentedSTTService, WebsocketService):
+class ModalWebsocketSTTService(WebsocketSTTService):
     def __init__(
         self, 
         # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
         # websocket_url: str = "wss://modal-labs-shababo-dev--streaming-parakeet-transcriber-webapp.modal.run/ws", 
-        # websocket_url: str = "wss://ta-01k7q7evwx07rsjz4zkbtan5g2-8000.wo-4ea1d6twzn97fk9ri36r0fqrm.w.modal.host/ws", 
+        websocket_url: str = "wss://modal-labs-shababo-dev--streaming-kyutai-stt-streamingky-2e1400.modal.run/ws", 
         reconnect_on_error: bool = True,
         **kwargs
     ):
-        SegmentedSTTService.__init__(self, **kwargs)
-        WebsocketService.__init__(self, reconnect_on_error=reconnect_on_error, **kwargs)
-        self._register_event_handler("on_connection_error")
+        # SegmentedSTTService.__init__(self, **kwargs)
+        # WebsocketService.__init__(self, reconnect_on_error=reconnect_on_error, **kwargs)
         super().__init__(**kwargs)
         self._id = str(uuid.uuid4())
-        parakeet_dict = modal.Dict.from_name("parakeet-dict", create_if_missing=True)
-        self._websocket_url = parakeet_dict.get("websocket_url")
+        # parakeet_dict = modal.Dict.from_name("streaming-kyutai-dict", create_if_missing=True)
+        kyutai_server_dict = modal.Dict.from_name("kyutai-server-dict", create_if_missing=True)
+        self._websocket_url = kyutai_server_dict.get("websocket_url")
+        # self._websocket_url = websocket_url
         self._receive_task = None
-
-    async def _report_error(self, error: ErrorFrame):
-        await self._call_event_handler("on_connection_error", error.error)
-        await self.push_error(error)
+        self._resampler = ResampyResampler()
+        self.is_speaking = False
+        self.aggregated_transcript = ""
 
     async def _connect(self):
         """Connect to WebSocket and start background tasks."""
@@ -182,8 +184,12 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
                 #     await self.push_frame(InterimTranscriptionFrame(msg_dict["text"], "", time_now_iso8601()))
                 #     await self._handle_transcription(message, False)
                 #     await self.stop_processing_metrics()
-                await self.push_frame(TranscriptionFrame(message, "", time_now_iso8601()))
-                # await self.push_frame(TTSSpeakFrame(message))
+                if message == "[END_OF_TURN]":
+                    await self.push_frame(TranscriptionFrame(self.aggregated_transcript, "", time_now_iso8601()))
+                    self.aggregated_transcript = ""
+                else:
+                    self.aggregated_transcript += message
+                    await self.push_frame(InterimTranscriptionFrame(self.aggregated_transcript, "", time_now_iso8601()))
                 await self._handle_transcription(message, True)
                 await self.stop_ttfb_metrics()
                 await self.stop_processing_metrics()
@@ -200,8 +206,32 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
     #     # making this timing measurement meaningless in this context.
     #     await self.start_ttfb_metrics()
     #     await self.start_processing_metrics()
+
+    # async def process_audio_frame(self, frame: AudioRawFrame, direction: FrameDirection):
+
+    #     if not frame.audio:
+    #         return
+        
+    #     # target_sr = self._sample_rate if self._sample_rate != 0 else self.init_sample_rate
+    #     resampled_audio_bytes = await self._resampler.resample(
+    #         frame.audio, frame.sample_rate, 24000
+    #     )
+
+    #     if len(resampled_audio_bytes) > 0:
+        
+    #         frame = InputAudioRawFrame(
+    #             audio=resampled_audio_bytes,
+    #             sample_rate=24000,
+    #             num_channels=frame.num_channels,
+    #         )
+
+    #     await super().process_audio_frame(frame, direction)
     
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
+
+        resampled_audio_bytes = await self._resampler.resample(
+            audio, self.sample_rate, 24000
+        )
 
         if not self._websocket:
             logger.error("Not connected to Parakeet.")
@@ -209,7 +239,7 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
             return
         await self.start_ttfb_metrics()
         try:
-            await self._websocket.send(audio)
+            await self._websocket.send(resampled_audio_bytes)
         except Exception as e:
             logger.error(f"Failed to send audio to Parakeet: {e}")
             yield ErrorFrame(f"Failed to send audio to Parakeet:  {e}")
@@ -245,3 +275,34 @@ class ParakeetSTTService(SegmentedSTTService, WebsocketService):
         #     logger.exception(f"Exception during transcription: {e}")
         #     yield ErrorFrame(f"Error during transcription: {str(e)}")
 
+    # async def process_frame(self, frame: Frame, direction: FrameDirection):
+    #     """Process frames with Deepgram-specific handling.
+
+    #     Args:
+    #         frame: The frame to process.
+    #         direction: The direction of frame processing.
+    #     """
+        
+        
+
+    #     if isinstance(frame, UserStartedSpeakingFrame):
+            
+    #         print("🟢 UserStartedSpeakingFrame")
+    #         await self.start_ttfb_metrics()
+    #         self.is_speaking = True
+
+    #     elif isinstance(frame, UserStoppedSpeakingFrame):
+    #         print("🔴 UserStoppedSpeakingFrame")
+    #         await self.push_frame(
+    #             TranscriptionFrame(
+    #                 self.aggregated_transcript,
+    #                 user_id=self._user_id,
+    #                 timestamp=time_now_iso8601(),
+    #                 # language="en",
+    #                 # result=self.aggregated_transcript,
+    #             ),
+    #             direction=direction,
+    #         )
+    #         self.aggregated_transcript = ""
+
+    #     await super().process_frame(frame, direction)

@@ -20,15 +20,15 @@ bot_image = (
     .apt_install(
         "git",
         "ffmpeg",
-        "libogg-dev",
-        "libvorbis-dev",
-        "libopus-dev",
-        "libopusfile-dev",
-        "libopusenc-dev",
-        "libflac-dev",
+        # "libogg-dev",
+        # "libvorbis-dev",
+        # "libopus-dev",
+        # "libopusfile-dev",
+        # "libopusenc-dev",
+        # "libflac-dev",
         )
-    .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.90",
+    .uv_pip_install(
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.91",
         "websocket-client",
         "aiofiles",
         "llama-index",  # ==0.12.41
@@ -36,7 +36,7 @@ bot_image = (
         "fastapi[standard]",  # ==0.115.9
         "llama-index-vector-stores-chroma",  # ==0.4.1
         "chromadb",  # ==1.0.11
-        "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
+        # "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
     )
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
@@ -75,7 +75,7 @@ async def run_bot(d: modal.Dict):
         SmallWebRTCConnection,
     )
 
-    from .bot.moe_and_dal_bot import run_bot
+    from .bot.moe_and_dal_bot import _run_bot
 
     try:
 
@@ -96,7 +96,7 @@ async def run_bot(d: modal.Dict):
             logger.info("WebRTC connection to bot closed.")
 
         print("Starting bot process.")
-        bot_task = asyncio.create_task(run_bot(webrtc_connection))
+        bot_task = asyncio.create_task(_run_bot(webrtc_connection))
 
         answer = webrtc_connection.get_answer()
         await d.put.aio("answer", answer)

@@ -48,14 +48,12 @@ from pipecat.frames.frames import LLMRunFrame
 from server.bot.animation import MoeDalBotAnimation, get_frames
 # from server.bot.local_smart_turn_v2 import LocalSmartTurnAnalyzerV2
 # from ..services.stt.kyutai_service import KyutaiSTTService
-from ..services.stt.parakeet_service import ParakeetSTTService
-from ..services.stt.streaming_parakeet_tunnel_service import ModalWebsocketSTTService
-
-from ..services.modal_rag.modal_rag_service import ModalRagLLMService, get_system_prompt
-
-
+# from ..services.stt.streaming_parakeet_tunnel_service import ModalWebsocketSTTService
 # from ..services.tts.chatterbox_service import ChatterboxTTSService
 # from ..services.tts.kokoro_service import KokoroTTSService
+
+from ..services.stt.parakeet_service import ParakeetSTTService
+from ..services.modal_rag.modal_rag_service import ModalRagLLMService, get_system_prompt
 from ..services.tts.kokoro_websocket_service import KokoroTTSService
 from ..services.tts.text_aggregator import ModalRagTextAggregator
 from .modal_rag import ModalRag
@@ -84,7 +82,7 @@ async def save_audio_file(audio: bytes, filename: str, sample_rate: int, num_cha
                 await file.write(buffer.getvalue())
         logger.info(f"Audio saved to {filename}")
 
-async def run_bot(webrtc_connection: SmallWebRTCConnection):
+async def _run_bot(webrtc_connection: SmallWebRTCConnection):
     """Main bot execution function.
 
     Sets up and runs the bot pipeline including:
@@ -127,7 +125,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
 
 
     stt = ParakeetSTTService(
-        # sample_rate=24000,
         audio_passthrough=True,
     )
 
@@ -166,8 +163,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     # ta = MoeDalBotAnimation()
 
     tts = KokoroTTSService(
-        # aiohttp_session=session,
-        # sample_rate=24000,
         text_aggregator=ModalRagTextAggregator(),
         # pause_frame_processing=True,
     )
@@ -205,7 +200,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     async def on_client_ready(rtvi):
         logger.info("Pipecat client ready.")
         await rtvi.set_bot_ready()
-        # await task.queue_frames([context_aggregator.user().get_context_frame()])
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
         await task.queue_frame(get_frames("thinking"))
         await task.queue_frame(LLMRunFrame())
         

@@ -725,7 +725,7 @@ class VLLMRAGServer:
 
 def get_rag_server_url():
     try:  
-        func = modal.Function.from_name("example-vllm-inference", "serve")
+        func = modal.Function.from_name("vllm-service", "serve")
         return func.get_web_url()
         return VLLMRAGServer().fastapi_app.get_web_url()
     except Exception as e:

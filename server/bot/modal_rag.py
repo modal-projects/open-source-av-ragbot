@@ -62,25 +62,10 @@ import torch
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Document, StorageContext, VectorStoreIndex
-from llama_index.core.node_parser import (
-    SemanticSplitterNodeParser,
-    MarkdownNodeParser,
-    )
+from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import Frame, TranscriptionFrame
 
-# @app.cls(
-#     volumes={
-#         "/models": models_volume,
-#         "/chroma": chroma_db_volume,
-#         "/modal_docs": modal_docs_volume,
-#     },
-#     cpu=8,
-#     memory=8192,
-#     gpu="l40s",
-#     image=rag_image,
-#     region='us-east-1'
-# )
 class ChromaVectorIndex:
     is_setup: bool = False
 
