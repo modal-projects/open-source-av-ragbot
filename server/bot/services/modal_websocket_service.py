@@ -22,9 +22,8 @@ class ModalWebsocketService(WebsocketService):
         reconnect_on_error: bool = True,
         **kwargs
     ):
-        WebsocketService.__init__(self, reconnect_on_error=reconnect_on_error, **kwargs)
-        self._register_event_handler("on_connection_error")
-        super().__init__(**kwargs)
+        super().__init__(reconnect_on_error=reconnect_on_error, **kwargs)
+        # self._register_event_handler("on_connection_error")
         self._websocket_url = websocket_url
         if dict_name:
             key = dict_url_key or "websocket_url"
@@ -32,6 +31,8 @@ class ModalWebsocketService(WebsocketService):
             self._websocket_url = url_dict.get(key)
         if not self._websocket_url:
             raise ValueError("Websocket URL is required")
+        else:
+            print(f"Websocket URL: {self._websocket_url}")
         self._receive_task = None
 
     async def _report_error(self, error: ErrorFrame):
@@ -40,6 +41,7 @@ class ModalWebsocketService(WebsocketService):
 
     async def _connect(self):
         """Connect to WebSocket and start background tasks."""
+        print(f"Connect: {self._websocket_url}")
         await self._connect_websocket()
 
         if self._websocket and not self._receive_task:
@@ -64,6 +66,7 @@ class ModalWebsocketService(WebsocketService):
 
     async def _connect_websocket(self):
         """Establish WebSocket connection to API."""
+        print(f"Connecting to WebSocket: {self._websocket_url}")
         try:
             if self._websocket and self._websocket.state is State.OPEN:
                 return
@@ -88,52 +91,3 @@ class ModalWebsocketService(WebsocketService):
         except Exception as e:
             logger.error(f"{self} error closing websocket: {e}")
 
-    def _get_websocket(self):
-        """Get the current WebSocket connection.
-
-        Returns the active WebSocket connection instance, raising an exception
-        if no connection is currently established.
-
-        Returns:
-            The active WebSocket connection instance.
-
-        Raises:
-            Exception: If no WebSocket connection is currently active.
-        """
-        if self._websocket:
-            return self._websocket
-        raise Exception("Websocket not connected")
-
-    def can_generate_metrics(self) -> bool:
-        """Indicate that this service can generate usage metrics."""
-        return True
-
-    async def start(self, frame: StartFrame):
-        """Start the Websocket service.
-
-        Initializes the service by constructing the WebSocket URL with all configured
-        parameters and establishing the connection to begin transcription processing.
-
-        Args:
-            frame: The start frame containing initialization parameters and metadata.
-        """
-        await super().start(frame)
-        await self._connect()
-
-    async def stop(self, frame: EndFrame):
-        """Stop the Websocket service.
-
-        Args:
-            frame: The end frame.
-        """
-        await super().stop(frame)
-        await self._disconnect()
-
-    async def cancel(self, frame: CancelFrame):
-        """Cancel the STT service.
-
-        Args:
-            frame: The cancel frame.
-        """
-        await super().cancel(frame)
-        await self._disconnect()

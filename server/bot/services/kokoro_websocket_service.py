@@ -38,6 +38,7 @@ class KokoroTTSService(WebsocketTTSService):
         # self.opus_decoder = OpusDecoder()
         # self.opus_decoder.set_channels(1)
         # self.opus_decoder.set_sampling_frequency(24000)
+
     async def _report_error(self, error: ErrorFrame):
         await self._call_event_handler("on_connection_error", error.error)
         await self.push_error(error)
@@ -74,7 +75,6 @@ class KokoroTTSService(WebsocketTTSService):
 
             self._websocket = await websocket_connect(
                 self._websocket_url,
-                # additional_headers={"Authorization": f"Token {self._api_key}"},
             )
             logger.debug("Connected to KokoroTTS Websocket")
         except Exception as e:
@@ -88,17 +88,10 @@ class KokoroTTSService(WebsocketTTSService):
             await self.stop_all_metrics()
 
             if self._websocket:
-                # await self._send_close_stream()
                 logger.debug("Disconnecting from KokoroTTS Websocket")
                 await self._websocket.close()
         except Exception as e:
             logger.error(f"{self} error closing websocket: {e}")
-
-    async def _send_close_stream(self) -> None:
-        if self._websocket:
-            logger.debug("Sending CloseStream message to KokoroTTS")
-            message = {"type": "CloseStream"}
-            await self._websocket.send(json.dumps(message))
 
     def _get_websocket(self):
         """Get the current WebSocket connection.

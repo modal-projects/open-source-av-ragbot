@@ -104,7 +104,7 @@ frontend_image = (
     .pip_install("fastapi==0.115.12")
     .add_local_dir("server", remote_path="/root/server")
     .add_local_dir(
-        Path(__file__).parent.parent / "client/dist",
+        Path(__file__).parent / "client/dist",
         remote_path="/frontend",
     )
 )

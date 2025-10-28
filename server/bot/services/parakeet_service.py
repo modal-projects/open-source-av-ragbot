@@ -5,6 +5,9 @@ from pipecat.frames.frames import (
     ErrorFrame, 
     Frame, 
     TranscriptionFrame, 
+    StartFrame, 
+    EndFrame, 
+    CancelFrame, 
 )
 from pipecat.services.stt_service import SegmentedSTTService
 from pipecat.transcriptions.language import Language
@@ -18,17 +21,69 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
         self, 
         **kwargs
     ):
-        modal_ws_kwargs = {}
-        if "websocket_url" in kwargs:
-            modal_ws_kwargs["websocket_url"] = kwargs.pop("websocket_url")
-        if "dict_name" in kwargs:
-            modal_ws_kwargs["dict_name"] = kwargs.pop("dict_name")
-        if "dict_url_key" in kwargs:
-            modal_ws_kwargs["dict_url_key"] = kwargs.pop("dict_url_key")
-        if "reconnect_on_error" in kwargs:
-            modal_ws_kwargs["reconnect_on_error"] = kwargs.pop("reconnect_on_error", True)
         SegmentedSTTService.__init__(self, **kwargs)
-        ModalWebsocketService.__init__(self, **modal_ws_kwargs)
+        ModalWebsocketService.__init__(self, **kwargs)
+        # modal_ws_kwargs = {}
+        # if "websocket_url" in kwargs:
+        #     modal_ws_kwargs["websocket_url"] = kwargs.pop("websocket_url")
+        # if "dict_name" in kwargs:
+        #     modal_ws_kwargs["dict_name"] = kwargs.pop("dict_name")
+        # if "dict_url_key" in kwargs:
+        #     modal_ws_kwargs["dict_url_key"] = kwargs.pop("dict_url_key")
+        # if "reconnect_on_error" in kwargs:
+        #     modal_ws_kwargs["reconnect_on_error"] = kwargs.pop("reconnect_on_error", True)
+        
+    def _get_websocket(self):
+        """Get the current WebSocket connection.
+
+        Returns the active WebSocket connection instance, raising an exception
+        if no connection is currently established.
+
+        Returns:
+            The active WebSocket connection instance.
+
+        Raises:
+            Exception: If no WebSocket connection is currently active.
+        """
+        print(f"Get WebSocket: {self._websocket_url}")
+        if self._websocket:
+            return self._websocket
+        raise Exception("Websocket not connected")
+
+    def can_generate_metrics(self) -> bool:
+        """Indicate that this service can generate usage metrics."""
+        return True
+
+    async def start(self, frame: StartFrame):
+        """Start the Websocket service.
+
+        Initializes the service by constructing the WebSocket URL with all configured
+        parameters and establishing the connection to begin transcription processing.
+
+        Args:
+            frame: The start frame containing initialization parameters and metadata.
+        """
+        print(f"Start: {self._websocket_url}")
+        await super().start(frame)
+        await self._connect()
+
+    async def stop(self, frame: EndFrame):
+        """Stop the Websocket service.
+
+        Args:
+            frame: The end frame.
+        """
+        await super().stop(frame)
+        await self._disconnect()
+
+    async def cancel(self, frame: CancelFrame):
+        """Cancel the STT service.
+
+        Args:
+            frame: The cancel frame.
+        """
+        await super().cancel(frame)
+        await self._disconnect()
 
     @traced_stt
     async def _handle_transcription(

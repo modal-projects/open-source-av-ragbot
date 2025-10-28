@@ -19,7 +19,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default: deploy no services (selective mode)
-DEPLOY_RAG=false
+DEPLOY_LLM=false
 DEPLOY_STT=false
 DEPLOY_TTS=false
 DEPLOY_BOT=false
@@ -29,15 +29,15 @@ if [[ $# -eq 0 ]]; then
     echo -e "${RED}❌ Error: Please specify services to deploy or use --all${NC}"
     echo ""
     echo "Usage:"
-    echo "  ./ragbot_deploy.sh rag             # Deploy only RAG service"
+    echo "  ./ragbot_deploy.sh llm             # Deploy only LLM service"
     echo "  ./ragbot_deploy.sh bot tts         # Deploy bot and TTS services"
     echo "  ./ragbot_deploy.sh --all           # Deploy all services"
     echo ""
-    echo "Valid service options: rag, stt, tts, bot"
+    echo "Valid service options: llm, stt, tts, bot"
     exit 1
 elif [[ "$1" == "--all" ]]; then
     # Deploy all services
-    DEPLOY_RAG=true
+    DEPLOY_LLM=true
     DEPLOY_STT=true
     DEPLOY_TTS=true
     DEPLOY_BOT=true
@@ -45,8 +45,8 @@ else
     # Parse the services to deploy
     for service in "$@"; do
         case "$service" in
-            "rag")
-                DEPLOY_RAG=true
+            "llm")
+                DEPLOY_LLM=true
                 ;;
             "stt")
                 DEPLOY_STT=true
@@ -59,7 +59,7 @@ else
                 ;;
             *)
                 echo -e "${RED}❌ Error: Unknown service '$service'${NC}"
-                echo "Valid options: rag, stt, tts, bot, --all"
+                echo "Valid options: llm, stt, tts, bot, --all"
                 exit 1
                 ;;
         esac
@@ -86,7 +86,7 @@ deploy_service() {
 echo "🚀 Modal Services Deployment"
 echo "=============================================="
 services_to_deploy=()
-if [[ "$DEPLOY_RAG" == "true" ]]; then services_to_deploy+=("RAG"); fi
+if [[ "$DEPLOY_LLM" == "true" ]]; then services_to_deploy+=("LLM"); fi
 if [[ "$DEPLOY_STT" == "true" ]]; then services_to_deploy+=("STT"); fi
 if [[ "$DEPLOY_TTS" == "true" ]]; then services_to_deploy+=("TTS"); fi
 if [[ "$DEPLOY_BOT" == "true" ]]; then services_to_deploy+=("Bot"); fi
@@ -102,23 +102,23 @@ echo -e "${BLUE}Starting deployment process...${NC}"
 # Deploy services in order (only if enabled)
 deployed_count=0
 
-if [[ "$DEPLOY_RAG" == "true" ]]; then
-    deploy_service "RAG Service" "server.services.modal_rag.vllm_server"
+if [[ "$DEPLOY_LLM" == "true" ]]; then
+    deploy_service "LLM Service" "server.llm.vllm_server"
     ((deployed_count++))
 fi
 
 if [[ "$DEPLOY_STT" == "true" ]]; then
-    deploy_service "STT Service" "server.services.stt.streaming_parakeet_tunnel"
+    deploy_service "STT Service" "server.stt.streaming_parakeet_tunnel"
     ((deployed_count++))
 fi
 
 if [[ "$DEPLOY_TTS" == "true" ]]; then
-    deploy_service "TTS Service" "server.services.tts.kokoro_tts"
+    deploy_service "TTS Service" "server.tts.kokoro_tts"
     ((deployed_count++))
 fi
 
 if [[ "$DEPLOY_BOT" == "true" ]]; then
-    deploy_service "Bot App" "server.app"
+    deploy_service "Bot App" "app"
     ((deployed_count++))
 fi
 
@@ -127,6 +127,6 @@ echo "=============================================="
 echo -e "${BLUE}Your Modal apps are now live and ready to use.${NC}"
 echo ""
 echo "Example usage:"
-echo "  ./ragbot_deploy.sh rag                # Deploy only RAG service"  
+echo "  ./ragbot_deploy.sh llm                # Deploy only LLM service"  
 echo "  ./ragbot_deploy.sh bot tts            # Deploy bot and TTS services"
 echo "  ./ragbot_deploy.sh --all              # Deploy all services" 

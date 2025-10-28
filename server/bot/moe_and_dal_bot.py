@@ -17,12 +17,7 @@ the conversation flow using the RAG system's streaming capabilities.
 """
 
 import sys
-
 from loguru import logger
-import io
-import wave
-import aiofiles
-
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -45,13 +40,15 @@ from pipecat.processors.aggregators.llm_response import LLMUserAggregatorParams
 from pipecat.frames.frames import LLMRunFrame
 
 from .services.parakeet_service import ModalSegmentedSTTService
-from .modal_rag_service import ModalRagLLMService, get_system_prompt
 from .services.kokoro_websocket_service import KokoroTTSService
-from .text_aggregator import ModalRagTextAggregator
-from .modal_rag import ModalRag
+from .services.modal_rag_service import ModalRagLLMService
+from .processors.text_aggregator import ModalRagTextAggregator
+from .processors.modal_rag import ModalRag, get_system_prompt
 
 from .avatar.animation import MoeDalBotAnimation
 from .processors.parser import ModalRagStreamingJsonParser
+
+import modal
 
 try:
     logger.remove(0)
@@ -106,22 +103,39 @@ async def run_bot(
     )
 
     stt = ModalSegmentedSTTService(
+        dict_name="parakeet-dict",
         audio_passthrough=True,
     )
 
     modal_rag = ModalRag(similarity_top_k=5)
 
+    func = modal.Function.from_name("vllm-service", "serve")
+    llm_url = func.get_web_url() + "/v1"
+
     # Initialize OpenAI API compatibleLLM service
-    llm = OpenAILLMService(
+    # llm = OpenAILLMService(
+    #     model="Qwen/Qwen3-4B-Instruct-2507",
+    #     api_key = "super-secret-key",
+    #     base_url = llm_url,
+    #     params=OpenAILLMService.InputParams(
+    #         extra={
+    #             "stream": True,
+    #         },
+    #     ),
+    # )
+
+    # json_parser = ModalRagStreamingJsonParser()
+
+    llm = ModalRagLLMService(
         model="Qwen/Qwen3-4B-Instruct-2507",
+        api_key = "super-secret-key",
+        base_url = llm_url,
         params=OpenAILLMService.InputParams(
             extra={
                 "stream": True,
             },
         ),
     )
-
-    json_parser = ModalRagStreamingJsonParser()
 
     messages = [
         {
@@ -155,21 +169,25 @@ async def run_bot(
     # RTVI events for Pipecat client UI
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
-    
+
+    processors = [
+        transport.input(),
+        stt,
+        modal_rag,
+        context_aggregator.user(),
+        llm,
+        # json_parser,
+        tts,
+        rtvi,
+    ]
+    if enable_video: # only add animation processor if video is enabled
+        processors.append(ta)
+    processors += [
+        transport.output(),
+        context_aggregator.assistant(),
+    ]
     pipeline = Pipeline(
-        [
-            transport.input(),
-            rtvi,
-            stt,
-            modal_rag,
-            context_aggregator.user(),
-            llm,
-            json_parser,
-            tts,
-            ta,
-            transport.output(),
-            context_aggregator.assistant(),
-        ]
+        processors=processors,
     )
 
     task = PipelineTask(

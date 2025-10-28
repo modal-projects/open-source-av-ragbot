@@ -2,8 +2,8 @@ import enum
 import time
 
 
-from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.frames.frames import LLMTextFrame, FrameDirection, Frame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.frames.frames import LLMTextFrame, Frame
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
 
@@ -23,12 +23,12 @@ class ParseState(enum.Enum):
     COMPLETE = "complete"
 
 
-class ModalRagStreamingJsonParser(FrameProcessor):
+class ModalRagStreamingJsonParser():
     """Streaming JSON parser for Modal RAG structured responses."""
 
-    def __init__(self):
+    def __init__(self, service: FrameProcessor):
         """Initialize with a reference to the service that owns this parser."""
-        super().__init__()
+        self.service = service
         self.reset()
 
     def reset(self):
@@ -55,16 +55,16 @@ class ModalRagStreamingJsonParser(FrameProcessor):
 
         self._start_time = time.perf_counter()
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
+    # async def process_frame(self, frame: Frame, direction: FrameDirection):
+    #     await super().process_frame(frame, direction)
 
-        if isinstance(frame, LLMTextFrame):
-            await self.process_chunk(frame.text)
+    #     if isinstance(frame, LLMTextFrame):
+    #         await self.process_chunk(frame.text)
 
-        # ALWAYS push all frames
-        else:
-            # SUPER IMPORTANT: always push every frame!
-            await self.push_frame(frame, direction)
+    #     # ALWAYS push all frames
+    #     else:
+    #         # SUPER IMPORTANT: always push every frame!
+    #         await self.service.push_frame(frame, direction)
 
     async def process_chunk(self, content: str) -> None:
         """Process a chunk of streaming content."""
@@ -209,7 +209,7 @@ class ModalRagStreamingJsonParser(FrameProcessor):
     async def handle_spoke_response_chunk(self, chunk: str):
         """Handle a chunk of the spoke_response as it streams in."""
         # Stream the text immediately for TTS
-        await self.push_frame(LLMTextFrame(chunk))
+        await self.service.push_frame(LLMTextFrame(chunk))
         if self._start_time is not None:
             # print(f"Spoke response chunk: {chunk}")
             # print(f"Time taken: {time.perf_counter() - self._start_time:.2f} seconds")
@@ -224,7 +224,7 @@ class ModalRagStreamingJsonParser(FrameProcessor):
     async def handle_code_blocks_complete(self, code_blocks: List[str]):
         """Handle completion of the code_blocks array."""
         # Send code blocks as structured data
-        await self.push_frame(RTVIServerMessageFrame(
+        await self.service.push_frame(RTVIServerMessageFrame(
             data={
                 "type": "code_blocks",
                 "payload": code_blocks
@@ -266,7 +266,7 @@ class ModalRagStreamingJsonParser(FrameProcessor):
                     print(f"Error testing link {test_link}: {e}")
 
         # Send links as structured data
-        await self.push_frame(RTVIServerMessageFrame(
+        await self.service.push_frame(RTVIServerMessageFrame(
             data={
                 "type": "links",
                 "payload": good_links
