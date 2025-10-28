@@ -7,22 +7,12 @@ from loguru import logger
 from pipecat.frames.frames import (
     ErrorFrame, 
     Frame, 
-    TranscriptionFrame, 
     StartFrame, 
     EndFrame, 
     CancelFrame, 
-    InterimTranscriptionFrame, 
-    UserStartedSpeakingFrame, 
-    UserStoppedSpeakingFrame, 
     TTSAudioRawFrame,
-    TTSStartedFrame,
-    TTSStoppedFrame,
 )
-from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.tts_service import WebsocketTTSService
-from pipecat.transcriptions.language import Language
-from pipecat.utils.tracing.service_decorators import traced_stt
-from pipecat.utils.time import time_now_iso8601
 
 from websockets.asyncio.client import connect as websocket_connect
 from websockets.protocol import State
@@ -30,8 +20,7 @@ import json
 
 import modal
 import uuid
-import base64
-# from pyogg import OpusDecoder
+
 
 class KokoroTTSService(WebsocketTTSService):
     def __init__(

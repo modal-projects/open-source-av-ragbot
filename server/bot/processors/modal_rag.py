@@ -5,55 +5,6 @@ import modal
 EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 MODELS_DIR = Path("/models")
 
-# # Volumes for caching models and vector store
-# modal_docs_volume = modal.Volume.from_name("modal_docs", create_if_missing=True)
-# models_volume = modal.Volume.from_name("models", create_if_missing=True)
-# chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=True)
-
-# # Main image with vLLM dependencies
-# rag_image = (
-#     modal.Image.from_registry(
-#         add_python="3.12",
-#     )
-#     .uv_pip_install(
-#         # vLLM and dependencies
-#         # "accelerate",  # ==1.5.2
-#         # "hf-transfer",  # ==0.1.8
-#         # "huggingface_hub[hf_xet]",  # ==0.26.2
-#         # # "torch==2.7.1",
-#         # # "transformers==4.53.2",  # ==4.50.0
-#         # "vllm",
-#         # LlamaIndex and RAG dependencies
-#         "llama-index",  # ==0.12.41
-#         "llama-index-embeddings-huggingface",  # ==0.5.4
-#         "fastapi[standard]",  # ==0.115.9
-#         "llama-index-vector-stores-chroma",  # ==0.4.1
-#         "chromadb",  # ==1.0.11
-#         # "flashinfer-python==0.2.10",
-#         # "triton==3.4.0",
-#         # "requests",
-#         # pre=True,
-#         # extra_options="-U --torch-backend=cu128 --extra-index-url https://wheels.vllm.ai/nightly/ --extra-index-url https://download.pytorch.org/whl/nightly/cu128 --index-strategy unsafe-best-match",
-#     )
-#     .env({
-#         "HF_HUB_ENABLE_HF_TRANSFER": "1",
-#         "HF_HOME": str(MODELS_DIR),
-#         # "VLLM_USE_V1": "0",
-#         # "VERBOSE": "DEBUG",
-#         # # "VLLM_ATTENTION_BACKEND": "DUAL_CHUNK_FLASH_ATTN",
-#         # # "VLLM_USE_TRTLLM_ATTENTION": "1",
-#         # # "TORCH_CUDA_ARCH_LIST": "7.5 8.0 8.9 9.0a 10.0a 12.0",
-#         # # "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
-#         # "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
-#         # "CUDA_CACHE_PATH": "/models/.nv_cache",
-#         # "TORCHINDUCTOR_CACHE_DIR": "/models/.inductor_cache",
-#         # "TRITON_CACHE_DIR": "/models/.triton_cache",
-#         # "VLLM_CACHE_ROOT": "/models/.vllm_cache",
-#         # "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
-#     })
-# )
-
-# with rag_image.imports():
 import time
 from pydantic import BaseModel, Field
 from huggingface_hub import snapshot_download

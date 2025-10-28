@@ -24,4 +24,6 @@ dependencies = [
     "beautifulsoup4>=4.13.4",
     "moviepy>=2.2.1",
     "matplotlib>=3.10.5",
+    "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce] >=0.0.91",
+    "fastapi>=0.120.1",
 ]
