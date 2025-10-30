@@ -5,6 +5,7 @@ import modal
 EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 MODELS_DIR = Path("/models")
 
+import os
 import time
 from pydantic import BaseModel, Field
 from huggingface_hub import snapshot_download
@@ -16,6 +17,8 @@ from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import Frame, TranscriptionFrame
+
+this_dir = Path(__file__).parent
 
 class ChromaVectorIndex:
     is_setup: bool = False
@@ -73,6 +76,12 @@ class ChromaVectorIndex:
             create_start = time.perf_counter()
 
             # Load Modal docs
+            if not os.path.exists("/modal_docs/modal_docs.md"):
+                docs_vol = modal.Volume.from_name("modal_docs", create_if_missing=True)
+                with docs_vol.batch_upload() as batch:
+                    batch.put_file(this_dir.parent / "assets" / "modal_docs.md", "/modal_docs.md")
+                docs_vol.commit()
+                docs_vol.reload()
             with open("/modal_docs/modal_docs.md") as f:
                 document = Document(text=f.read())
 
