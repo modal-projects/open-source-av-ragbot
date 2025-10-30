@@ -15,8 +15,10 @@ class ModalRagLLMService(OpenAILLMService):
     def __init__(self, *args, **kwargs):
         if not kwargs.get("api_key"):
             kwargs["api_key"] = "super-secret-key"
-        func = modal.Function.from_name("vllm-service", "serve")
-        llm_url = func.get_web_url() + "/v1"
+        # func = modal.Function.from_name("vllm-service", "serve")
+        # llm_url = func.get_web_url() + "/v1"
+        vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
+        llm_url = vllm_dict.get("vllm_url")
         if not kwargs.get("base_url"):
             kwargs["base_url"] = llm_url
         super().__init__(*args, **kwargs)
