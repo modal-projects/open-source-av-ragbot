@@ -24,7 +24,16 @@ Use the same script to redeploy the bot:
 ./utils/ragbot_deploy.sh bot
 ```
 
-The bot container takes about 20 seconds to cold start.
+The bot container takes about 20 seconds to cold start, and we also set `min_containers=1` so the 20 seconds starts when you redeploy, not when you hit "Connect".
+
+### Frontend URL
+The front end URL will print to the console and look like:
+```
+├── 🔨 Created function serve_bot.
+└── 🔨 Created web function serve_frontend => https://{workspace}-{environment}--moe-and-dal-ragbot-serve-frontend.modal.run
+```
+
+You can also find this URL in the web function's (`serve_frontend`) view in your Modal Dashboard.
 
 ## Note on bot start up time
 Warming up the RAG retriever takes about 15 seconds. I'd love to figure out how to optimize or snapshot this, but for now you'll have to wait about 20 seconds after you hit "Connect" in the browser for the bot to start.
