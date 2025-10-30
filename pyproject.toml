@@ -12,7 +12,7 @@ dependencies = [
     "modal>=1.0.4",
     "requests>=2.32.4",
     "tqdm>=4.66.0",
-    "transformers==4.50.0",
+    "transformers==4.53.0",
     "torch==2.5.1",
     "unstructured>=0.10.0",
     "websocket-client>=1.8.0",
