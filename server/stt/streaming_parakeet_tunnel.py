@@ -3,6 +3,8 @@ import os
 import sys
 from pathlib import Path
 import time
+import json
+import base64
 
 import modal
 
@@ -73,28 +75,26 @@ with image.imports():
     import torchaudio
 
 
-
 @app.cls(
     volumes={"/cache": model_cache}, 
     gpu=["L40S", "A100", "A100-80GB"], 
     image=image,
-    # enable_memory_snapshot=True,
-    # experimental_options={"enable_gpu_snapshot": True},
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
     region='us-east-1',
     min_containers=1,
 )
 @modal.concurrent(max_inputs=20)
 class Transcriber:
-    @modal.enter()
-    def load(self):
-        import threading
 
-        import uvicorn
-        from fastapi import FastAPI
+    @modal.enter(snap=True)
+    def load(self):
+        
 
         # silence chatty logs from nemo
         logging.getLogger("nemo_logger").setLevel(logging.CRITICAL)
 
+        self.use_vad = False
         self.model = nemo_asr.models.ASRModel.from_pretrained(
             model_name="nvidia/parakeet-tdt-0.6b-v3"
         )
@@ -108,19 +108,20 @@ class Transcriber:
             self.model.change_decoding_strategy(self.model.cfg.decoding)
 
         torchaudio.set_audio_backend("soundfile")
-        # self.silero_vad, utils = torch.hub.load(
-        #     repo_or_dir='snakers4/silero-vad',
-        #     model='silero_vad',
-        #     force_reload=True
-        # )
+
+        self.silero_vad, utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=True
+        )
         
-        # (
-        #     self.get_speech_timestamps,
-        #     self.save_audio,
-        #     self.read_audio,
-        #     self.VADIterator,
-        #     self.collect_chunks
-        # ) = utils
+        (
+            self.get_speech_timestamps,
+            self.save_audio,
+            self.read_audio,
+            self.VADIterator,
+            self.collect_chunks
+        ) = utils
 
         # warm up gpu
         AUDIO_URL = "https://github.com/voxserv/audio_quality_testing_samples/raw/refs/heads/master/mono_44100/156550__acclivity__a-dream-within-a-dream.wav"
@@ -152,34 +153,62 @@ class Transcriber:
 
         print("GPU warmed up")
 
-        web_app = FastAPI()
+    @modal.enter(snap=False)
+    def _start_server(self):
 
-        @web_app.websocket("/ws")
+        import threading
+
+        import uvicorn
+        from fastapi import FastAPI
+
+        self.web_app = FastAPI()
+
+        @self.web_app.websocket("/ws")
         async def run_with_websocket(ws: WebSocket):
 
             audio_queue = asyncio.Queue()
+
             transcription_queue = asyncio.Queue()
-            
-            # vad = self.VADIterator(
-            #     self.silero_vad, 
-            #     threshold = 0.4,
-            #     sampling_rate = 16000,
-            #     min_silence_duration_ms = 250,
-            #     speech_pad_ms = 100,
-            # )
+            vad = None
+            if self.use_vad:
+                vad = self.VADIterator(
+                    self.silero_vad, 
+                    threshold = 0.4,
+                    sampling_rate = 16000,
+                    min_silence_duration_ms = 250,
+                    speech_pad_ms = 100,
+                )
+                
 
             async def recv_loop(ws, audio_queue):
                 audio_buffer = bytearray()
                 while True:
-                    data = await ws.receive_bytes()
-                    # audio_buffer.append(data)
-                    # if len(audio_buffer) > VAD_CHUNK_SIZE:
-                    #     await audio_queue.put(audio_buffer[:VAD_CHUNK_SIZE])
-                    #     audio_buffer = audio_buffer[VAD_CHUNK_SIZE:]
+                    msg = await ws.receive_text()
+                    try:
+                        json_data = json.loads(msg)
+                        if "type" in json_data:
+                            if json_data["type"] == "set_vad":
+                                self.use_vad = json_data["vad"]
+                                continue
+                            elif json_data["type"] == "audio":
+                                data = json_data["audio"]
+                                data = base64.b64decode(data.encode('utf-8'))
+                            else:
+                                continue
+                        else:
+                            continue
+                    except Exception as e:
+                        continue
+
+                    if self.use_vad:
+                        audio_buffer.append(data)
+                        if len(audio_buffer) > VAD_CHUNK_SIZE:
+                            await audio_queue.put(audio_buffer[:VAD_CHUNK_SIZE])
+                            audio_buffer = audio_buffer[VAD_CHUNK_SIZE:]
 
                     await audio_queue.put(data)
                     
-            async def inference_loop(audio_queue, transcription_queue):
+            async def inference_loop(audio_queue, transcription_queue, vad=None):
                 all_audio_data = None
                 start_idx = None
                 end_idx = None
@@ -188,82 +217,83 @@ class Transcriber:
                     audio_data = await audio_queue.get()
                     audio_data = _bytes_to_torch(audio_data)
 
-                    start_time = time.perf_counter()
-                    
-                    # audio_segment = all_audio_data[start_idx:end_idx]
-                    transcript = self.transcribe(audio_data)
-                    await transcription_queue.put(transcript)
-
-                    end_time = time.perf_counter()
-                    print(f"time taken to transcribe audio segment: {end_time - start_time} seconds")
-
-
-
-                    # collect in torch array
-                    # if all_audio_data is None:
-                    #     all_audio_data = audio_data
-                    # else:
-                    #     all_audio_data = torch.cat([all_audio_data, audio_data])
-                    
-                    # start_time = time.perf_counter()
-                    # speech_time_stamps =vad(
-                    #     audio_data, # only need to pass in new data
-                    # )
-                    # end_time = time.perf_counter()
-                    # print(f"time taken to get speech timestamps: {end_time - start_time} seconds")
-                    
-                    # # no speech detected
-                    # if not speech_time_stamps:
-                    #     continue
-                    
-                    # # start of speech detected
-                    # if speech_time_stamps.get("start") and start_idx is None:
-                    #     start_idx = speech_time_stamps["start"]
-                    #     print(f"speech started at {start_idx}")
-                    
-                    # # end of speech detected
-                    # if speech_time_stamps.get("end"):
-                    #     end_idx = speech_time_stamps["end"]
-                    #     vad.reset_states()
-
-                    #     # failback if start of speech not set
-                    #     if start_idx is None:
-                    #         start_idx = 0
+                    if not vad:
+                        start_time = time.perf_counter()
                         
-                    #     # don't transcribe if speech is too short
-                    #     if end_idx - start_idx < MIN_AUDIO_SEGMENT_DURATION_SAMPLES:
-                    #         end_idx = None # don't reset start_idx
-                    #         continue
-                        
-                    #     start_time = time.perf_counter()
-                        
-                    #     audio_segment = all_audio_data[start_idx:end_idx]
-                    #     transcript = self.transcribe(audio_segment)
-                    #     await transcription_queue.put(transcript)
+                        # audio_segment = all_audio_data[start_idx:end_idx]
+                        transcript = self.transcribe(audio_data)
+                        await transcription_queue.put(transcript)
 
-                    #     end_time = time.perf_counter()
-                    #     print(f"time taken to transcribe audio segment: {end_time - start_time} seconds")
+                        end_time = time.perf_counter()
+                        print(f"time taken to transcribe audio segment: {end_time - start_time} seconds")
+                    else:
 
-                    #     # feed leftover audio through vad and capture and speech detection
-                    #     # take largest multiple of VAD_CHUNK_SIZE
-                    #     samples_remaining = (len(all_audio_data) - end_idx) // VAD_CHUNK_SIZE * VAD_CHUNK_SIZE
-                    #     all_audio_data = all_audio_data[-samples_remaining:]
 
-                    #     start_idx = None
-                    #     end_idx = None
+                        # collect in torch array
+                        if all_audio_data is None:
+                            all_audio_data = audio_data
+                        else:
+                            all_audio_data = torch.cat([all_audio_data, audio_data])
                         
-                    #     # this loop only captures the first start time which will be the
-                    #     # start of the next segment
-                    #     for chunk in chunk_audio(all_audio_data, VAD_CHUNK_SIZE):
-                    #         speech_time_stamps = vad(chunk)
-                    #         if not speech_time_stamps:
-                    #             continue
-                    #         if speech_time_stamps.get("start") and start_idx is None:
-                    #             start_idx = speech_time_stamps["start"]
-                    #             print(f"speech started at {start_idx}")
-                    #         if speech_time_stamps.get("end"):
-                    #             print(f"full speech found in remainging audio")
-                    #             vad.reset_states()
+                        start_time = time.perf_counter()
+                        speech_time_stamps =vad(
+                            audio_data, # only need to pass in new data
+                        )
+                        end_time = time.perf_counter()
+                        print(f"time taken to get speech timestamps: {end_time - start_time} seconds")
+                        
+                        # no speech detected
+                        if not speech_time_stamps:
+                            continue
+                        
+                        # start of speech detected
+                        if speech_time_stamps.get("start") and start_idx is None:
+                            start_idx = speech_time_stamps["start"]
+                            print(f"speech started at {start_idx}")
+                        
+                        # end of speech detected
+                        if speech_time_stamps.get("end"):
+                            end_idx = speech_time_stamps["end"]
+                            vad.reset_states()
+
+                            # failback if start of speech not set
+                            if start_idx is None:
+                                start_idx = 0
+                            
+                            # don't transcribe if speech is too short
+                            if end_idx - start_idx < MIN_AUDIO_SEGMENT_DURATION_SAMPLES:
+                                end_idx = None # don't reset start_idx
+                                continue
+                            
+                            start_time = time.perf_counter()
+                            
+                            audio_segment = all_audio_data[start_idx:end_idx]
+                            transcript = self.transcribe(audio_segment)
+                            await transcription_queue.put(transcript)
+
+                            end_time = time.perf_counter()
+                            print(f"time taken to transcribe audio segment: {end_time - start_time} seconds")
+
+                            # feed leftover audio through vad and capture and speech detection
+                            # take largest multiple of VAD_CHUNK_SIZE
+                            samples_remaining = (len(all_audio_data) - end_idx) // VAD_CHUNK_SIZE * VAD_CHUNK_SIZE
+                            all_audio_data = all_audio_data[-samples_remaining:]
+
+                            start_idx = None
+                            end_idx = None
+                            
+                            # this loop only captures the first start time which will be the
+                            # start of the next segment
+                            for chunk in chunk_audio(all_audio_data, VAD_CHUNK_SIZE):
+                                speech_time_stamps = vad(chunk)
+                                if not speech_time_stamps:
+                                    continue
+                                if speech_time_stamps.get("start") and start_idx is None:
+                                    start_idx = speech_time_stamps["start"]
+                                    print(f"speech started at {start_idx}")
+                                if speech_time_stamps.get("end"):
+                                    print(f"full speech found in remainging audio")
+                                    vad.reset_states()
 
                         
             async def send_loop(transcription_queue, ws):
@@ -277,7 +307,7 @@ class Transcriber:
             try:
                 tasks = [
                     asyncio.create_task(recv_loop(ws, audio_queue)),
-                    asyncio.create_task(inference_loop(audio_queue, transcription_queue)),
+                    asyncio.create_task(inference_loop(audio_queue, transcription_queue, vad)),
                     asyncio.create_task(send_loop(transcription_queue, ws)),
                 ]
                 await asyncio.gather(*tasks)
@@ -289,10 +319,8 @@ class Transcriber:
                 await ws.close(code=1011)  # internal error
                 raise e
 
-        
-
         def start_server():
-            uvicorn.run(web_app, host="0.0.0.0", port=8000)
+            uvicorn.run(self.web_app, host="0.0.0.0", port=8000)
 
         self.server_thread = threading.Thread(target=start_server, daemon=True)
         self.server_thread.start()
@@ -300,11 +328,19 @@ class Transcriber:
         self.tunnel_ctx = modal.forward(8000)
         self.tunnel = self.tunnel_ctx.__enter__()
         print("forwarding get / 200 at url: ", self.tunnel.url)
-        websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
-        parakeet_dict.put("websocket_url", websocket_url)
-        print(f"Websocket URL: {websocket_url}")
+        self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
+        parakeet_dict.put("websocket_url", self.websocket_url)
+        print(f"Websocket URL: {self.websocket_url}")
 
 
+    @modal.method()
+    async def register_client(self, d: modal.Dict, client_id: str):
+        d.put("url", self.websocket_url)
+        while True:
+            if await d.get.aio(client_id):
+                asyncio.sleep(0.5)
+            else:
+                return
         
 
     def transcribe(self, audio_data) -> str:
@@ -318,127 +354,7 @@ class Transcriber:
     @modal.asgi_app()
     def webapp(self):
         
-        web_app = FastAPI()
-
-        @web_app.websocket("/ws")
-        async def run_with_websocket(ws: WebSocket):
-
-            audio_queue = asyncio.Queue()
-            transcription_queue = asyncio.Queue()
-
-            # vad = self.VADIterator(
-            #     self.silero_vad, 
-            #     threshold = 0.4,
-            #     sampling_rate = SAMPLE_RATE,
-            #     min_silence_duration_ms = 500,
-            #     speech_pad_ms = 100,
-            # )
-
-            async def recv_loop(ws, audio_queue):
-                while True:
-                    data = await ws.receive_bytes()
-                    await audio_queue.put(data)
-                    
-            async def inference_loop(audio_queue, transcription_queue):
-                all_audio_data = None
-                start_idx = None
-                end_idx = None
-                while True:
-                    
-                    audio_data = await audio_queue.get()
-                    audio_data = _bytes_to_torch(audio_data)
-
-                    # # collect in torch array
-                    # if all_audio_data is None:
-                    #     all_audio_data = audio_data
-                    # else:
-                    #     all_audio_data = torch.cat([all_audio_data, audio_data])
-                    
-                    # start_time = time.perf_counter()
-                    # speech_time_stamps =vad(
-                    #     audio_data, # only need to pass in new data
-                    # )
-                    # end_time = time.perf_counter()
-                    # print(f"time taken to get speech timestamps: {end_time - start_time} seconds")
-                    
-                    # no speech detected
-                    # if not speech_time_stamps:
-                    #     continue
-                    
-                    # # start of speech detected
-                    # if speech_time_stamps.get("start") and start_idx is None:
-                    #     start_idx = speech_time_stamps["start"]
-                    #     print(f"speech started at {start_idx}")
-                    
-                    # # end of speech detected
-                    # if speech_time_stamps.get("end"):
-                    #     end_idx = speech_time_stamps["end"]
-                    #     vad.reset_states()
-
-                    #     # failback if start of speech not set
-                    #     if start_idx is None:
-                    #         start_idx = 0
-                        
-                    #     # don't transcribe if speech is too short
-                    #     if end_idx - start_idx < MIN_AUDIO_SEGMENT_DURATION_SAMPLES:
-                    #         end_idx = None # don't reset start_idx
-                    #         continue
-                        
-                    start_time = time.perf_counter()
-                    
-                    # audio_segment = all_audio_data[start_idx:end_idx]
-                    transcript = self.transcribe(audio_data)
-                    await transcription_queue.put(transcript)
-
-                    end_time = time.perf_counter()
-                    print(f"time taken to transcribe audio segment: {end_time - start_time} seconds")
-
-                        # # feed leftover audio through vad and capture and speech detection
-                        # # take largest multiple of VAD_CHUNK_SIZE
-                        # samples_remaining = (len(all_audio_data) - end_idx) // VAD_CHUNK_SIZE * VAD_CHUNK_SIZE
-                        # all_audio_data = all_audio_data[-samples_remaining:]
-
-                        # start_idx = None
-                        # end_idx = None
-                        
-                        # # this loop only captures the first start time which will be the
-                        # # start of the next segment
-                        # for chunk in chunk_audio(all_audio_data, VAD_CHUNK_SIZE):
-                        #     speech_time_stamps = vad(chunk)
-                        #     if not speech_time_stamps:
-                        #         continue
-                        #     if speech_time_stamps.get("start") and start_idx is None:
-                        #         start_idx = speech_time_stamps["start"]
-                        #         print(f"speech started at {start_idx}")
-                        #     if speech_time_stamps.get("end"):
-                        #         print(f"full speech found in remainging audio")
-                        #         vad.reset_states()
-
-                        
-            async def send_loop(transcription_queue, ws):
-                while True:
-                    transcript = await transcription_queue.get()
-                    print(f"sending transcription data: {transcript}")
-                    await ws.send_text(transcript)
-
-            await ws.accept()
-
-            try:
-                tasks = [
-                    asyncio.create_task(recv_loop(ws, audio_queue)),
-                    asyncio.create_task(inference_loop(audio_queue, transcription_queue)),
-                    asyncio.create_task(send_loop(transcription_queue, ws)),
-                ]
-                await asyncio.gather(*tasks)
-            except WebSocketDisconnect:
-                print("WebSocket disconnected")
-                await ws.close(code=1000)
-            except Exception as e:
-                print("Exception:", e)
-                await ws.close(code=1011)  # internal error
-                raise e
-
-        return web_app
+        return self.web_app
 
 
 # web_image = (

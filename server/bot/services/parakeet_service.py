@@ -1,5 +1,7 @@
+import json
 from typing import AsyncGenerator, Optional
 from loguru import logger
+import base64
 
 from pipecat.frames.frames import (
     ErrorFrame, 
@@ -66,6 +68,12 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
         print(f"Start: {self._websocket_url}")
         await super().start(frame)
         await self._connect()
+        # turn off vad
+        vad_msg = {
+            "type": "set_vad",
+            "vad": False
+        }
+        await self._websocket.send(json.dumps(vad_msg))
 
     async def stop(self, frame: EndFrame):
         """Stop the Websocket service.
@@ -113,7 +121,11 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
             return
         await self.start_ttfb_metrics()
         try:
-            await self._websocket.send(audio)
+            audio_msg = {
+                "type": "audio",
+                "audio": base64.b64encode(audio).decode("utf-8")
+            }
+            await self._websocket.send(json.dumps(audio_msg))
         except Exception as e:
             logger.error(f"Failed to send audio to Parakeet: {e}")
             yield ErrorFrame(f"Failed to send audio to Parakeet:  {e}")
