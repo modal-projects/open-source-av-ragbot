@@ -15,9 +15,16 @@ ENDOFSENTENCE_PATTERN_STR = r"""
     (?<!Mr|Ms|Dr)    # Negative lookbehind: not preceded by Mr, Ms, Dr (combined bc. length is the same)
     (?<!Mrs)         # Negative lookbehind: not preceded by "Mrs"
     (?<!Prof)        # Negative lookbehind: not preceded by "Prof"
-    (\.\s*\.\s*\.|[\.\?\!;])|   # Match a period, question mark, exclamation point, or semicolon
-    (\。\s*\。\s*\。|[。？！；])  # the full-width version (mainly used in East Asian languages such as Chinese, Hindi)
-    $                # End of string
+    (
+        \.\s*\.\s*\.      # Ellipsis ...
+        | [\.\?\!;]\s     # Period, question mark, exclamation point, or semicolon followed by space (no comma)
+    )
+    |
+    (
+        \。\s*\。\s*\。   # Full-width ellipsis 。。。
+        | [。？！；]\s    # Full-width period, question mark, exclamation point, or semicolon followed by space (no comma)
+    )
+    $
 """
 
 ENDOFSENTENCE_PATTERN = re.compile(ENDOFSENTENCE_PATTERN_STR, re.VERBOSE)

@@ -1,36 +1,64 @@
-# Built from Pipecat's Modal Deployment example here:
-# https://github.com/pipecat-ai/pipecat/tree/main/examples/deployment/modal-example
-
 import asyncio
 from pathlib import Path
 
 import modal
 
+MODELS_DIR = Path("/models")
+
 app = modal.App("moe-and-dal-ragbot")
+
+modal_docs_volume = modal.Volume.from_name("modal_docs", create_if_missing=True)
+models_volume = modal.Volume.from_name("models", create_if_missing=True)
+chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=True)
 
 # container specifications for the Pipecat pipeline
 bot_image = (
     modal.Image.debian_slim(python_version="3.12",)
-    .apt_install("ffmpeg")
-    .pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.76",
-        "websocket-client",
-        "aiofiles"
+    .apt_install(
+        "git",
+        "ffmpeg",
     )
+    .uv_pip_install(
+        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.91",
+        "websocket-client",
+        "aiofiles",
+        "llama-index",
+        "llama-index-embeddings-huggingface",
+        "fastapi[standard]",
+        "llama-index-vector-stores-chroma",
+        "chromadb",
+    )
+    .env({
+        "HF_HUB_ENABLE_HF_TRANSFER": "1",
+        "HF_HOME": str(MODELS_DIR),
+    })
     .add_local_dir("server", remote_path="/root/server")
 )
 
 MINUTES = 60  # seconds in a minute
 
+with bot_image.imports():
+    from loguru import logger
+    from pipecat.transports.smallwebrtc.connection import (
+        IceServer,
+        SmallWebRTCConnection,
+    )
+
+    from server.bot.moe_and_dal_bot import run_bot
 
 @app.function(
     image=bot_image,
     gpu="l40s",
     timeout=30 * MINUTES,
     min_containers=1,
-    region='us-east-1'
+    region='us-east-1',
+    volumes={
+        MODELS_DIR: models_volume,
+        "/chroma": chroma_db_volume,
+        "/modal_docs": modal_docs_volume,
+    },
 )
-async def run_bot(d: modal.Dict):
+async def serve_bot(d: modal.Dict):
     """Launch the bot process with WebRTC connection and run the bot pipeline.
 
     Args:
@@ -39,13 +67,7 @@ async def run_bot(d: modal.Dict):
     Raises:
         RuntimeError: If the bot pipeline fails to start or encounters an error.
     """
-    from loguru import logger
-    from pipecat.transports.network.webrtc_connection import (
-        IceServer,
-        SmallWebRTCConnection,
-    )
-
-    from .bot.moe_and_dal_bot import run_bot
+    
 
     try:
 
@@ -77,80 +99,29 @@ async def run_bot(d: modal.Dict):
         raise RuntimeError(f"Failed to start bot pipeline: {e}")
 
 
-web_server_image = (
+frontend_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi==0.115.12")
     .add_local_dir("server", remote_path="/root/server")
+    .add_local_dir(
+        Path(__file__).parent / "client/dist",
+        remote_path="/frontend",
+    )
 )
 
-
-# @app.function(
-#     image=web_server_image,
-# )
-# @modal.asgi_app()
-# def bot_server():
-#     """Create and configure the FastAPI application.
-
-#     This function initializes the FastAPI app with middleware, routes, and lifespan management.
-#     It is decorated to be used as a Modal ASGI app.
-#     """
-#     from fastapi import FastAPI
-#     from fastapi.middleware.cors import CORSMiddleware
-
-#     # Initialize FastAPI app
-#     web_app = FastAPI()
-
-#     # # # setup CORS
-#     web_app.add_middleware(
-#         CORSMiddleware,
-#         allow_origins=["*"],
-#         allow_credentials=True,
-#         allow_methods=["*"],
-#         allow_headers=["*"],
-#     )
-
-#     @web_app.post("/offer")
-#     async def offer(offer: dict):
-
-#         _ICE_SERVERS = [
-#             {
-#                 "urls": "stun:stun.l.google.com:19302",
-#             }
-#         ]
-
-#         with modal.Dict.ephemeral() as d:
-
-#             await d.put.aio("ice_servers", _ICE_SERVERS)
-#             await d.put.aio("offer", offer)
-
-#             run_bot.spawn(d)
-
-#             while True:
-#                 answer = await d.get.aio("answer")
-#                 if answer:
-#                     return answer
-#                 await asyncio.sleep(0.1)
-
-#     return web_app
-
-
-frontend_image = web_server_image.add_local_dir(
-    Path(__file__).parent.parent / "client/dist",
-    remote_path="/frontend",
-)
-
+with frontend_image.imports():
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+    from fastapi.staticfiles import StaticFiles
 
 @app.function(image=frontend_image)
 @modal.asgi_app()
-def frontend_server():
+def serve_frontend():
     """Create and configure the FastAPI application.
 
     This function initializes the FastAPI app with middleware, routes, and lifespan management.
     It is decorated to be used as a Modal ASGI app.
     """
-    from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse, RedirectResponse
-    from fastapi.staticfiles import StaticFiles
 
     web_app = FastAPI()
 
@@ -175,7 +146,7 @@ def frontend_server():
             await d.put.aio("ice_servers", _ICE_SERVERS)
             await d.put.aio("offer", offer)
 
-            run_bot.spawn(d)
+            serve_bot.spawn(d)
 
             while True:
                 answer = await d.get.aio("answer")
