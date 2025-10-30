@@ -79,15 +79,16 @@ with image.imports():
     volumes={"/cache": model_cache}, 
     gpu=["L40S", "A100", "A100-80GB"], 
     image=image,
-    enable_memory_snapshot=True,
-    experimental_options={"enable_gpu_snapshot": True},
+    # enable_memory_snapshot=True,
+    # experimental_options={"enable_gpu_snapshot": True},
     region='us-east-1',
     min_containers=1,
 )
 @modal.concurrent(max_inputs=20)
 class Transcriber:
 
-    @modal.enter(snap=True)
+    # @modal.enter(snap=True)
+    @modal.enter()
     def load(self):
         
 
@@ -153,7 +154,8 @@ class Transcriber:
 
         print("GPU warmed up")
 
-    @modal.enter(snap=False)
+    # @modal.enter(snap=False)
+    @modal.enter()
     def _start_server(self):
 
         import threading
@@ -335,12 +337,14 @@ class Transcriber:
 
     @modal.method()
     async def register_client(self, d: modal.Dict, client_id: str):
+        print(f"Registering client {client_id}")
         d.put("url", self.websocket_url)
         while True:
             if await d.get.aio(client_id):
                 asyncio.sleep(0.5)
             else:
-                return
+                print(f"Client {client_id} closed")
+                return True
         
 
     def transcribe(self, audio_data) -> str:
@@ -355,41 +359,6 @@ class Transcriber:
     def webapp(self):
         
         return self.web_app
-
-
-# web_image = (
-#     modal.Image.debian_slim(python_version="3.12")
-#     .pip_install("fastapi")
-#     .add_local_dir(
-#         Path(__file__).parent.parent / "frontend" /"streaming-parakeet-frontend", "/root/frontend"
-#     )
-# )
-
-# with web_image.imports():
-#     from fastapi import FastAPI,  WebSocket
-#     from fastapi.responses import HTMLResponse, Response
-#     from fastapi.staticfiles import StaticFiles
-
-# @app.cls(image=web_image)
-# @modal.concurrent(max_inputs=1000)
-# class WebServer:
-#     @modal.asgi_app()
-#     def web(self):
-        
-
-#         web_app = FastAPI()
-#         web_app.mount("/static", StaticFiles(directory="frontend"))
-
-#         @web_app.get("/status")
-#         async def status():
-#             return Response(status_code=200)
-
-#         # serve frontend
-#         @web_app.get("/")
-#         async def index():
-#             return HTMLResponse(content=open("frontend/index.html").read())
-
-#         return web_app
 
 
 class NoStdStreams(object):

@@ -103,7 +103,8 @@ async def run_bot(
     )
 
     stt = ModalSegmentedSTTService(
-        dict_name="parakeet-dict",
+        app_name="parakeet-transcription",
+        cls_name="Transcriber",
         audio_passthrough=True,
     )
 

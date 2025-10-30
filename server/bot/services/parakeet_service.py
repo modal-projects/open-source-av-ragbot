@@ -105,6 +105,8 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
         """
         async for message in self._get_websocket():
             if isinstance(message, str):
+                # replace moodle and Moodle with Modal
+                message = message.replace("moodle", "Modal").replace("Moodle", "Modal")
                 await self.push_frame(TranscriptionFrame(message, "", time_now_iso8601()))
                 await self._handle_transcription(message, True)
                 await self.stop_ttfb_metrics()
