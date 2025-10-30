@@ -3,6 +3,10 @@ Video chat with Modal's mascots, Moe and Dal, about Modal and its documentation.
 
 # Dev Instructions for Daily
 
+## Dev environment
+
+The `uv` project has many of the dependencies installed so you can use all of the nice IDE features like autocompletion. Though this isn't strictly necessary. I believe `modal` should be the only actual dependency.
+
 ## Deploying STT, LLM, and TTS Services
 
 I think the easiest way to use the app is for y'all to deploy the GPU services in your own workspaces. I could rework the code and provide URLs. But if a container restarts, the URL will change and this would block you since you couldn't retrieve the URL from a different workspace.
@@ -35,5 +39,7 @@ The front end URL will print to the console and look like:
 
 You can also find this URL in the web function's (`serve_frontend`) view in your Modal Dashboard.
 
-## Note on bot start up time
-Warming up the RAG retriever takes about 15 seconds. I'd love to figure out how to optimize or snapshot this, but for now you'll have to wait about 20 seconds after you hit "Connect" in the browser for the bot to start.
+## Note on RAG setup during bot start up
+The first time you run your bot it will need to set up the RAG index. Sometimes this will cause a new offer to be triggered which spawns a new bot. If this happens you have to kill the running function calls and reconnect manually. Is there a way to increase the time between retries?
+
+Every time you connect to a bot you need to warm up the RAG retriever which takes about 15 seconds. I'd love to figure out how to optimize or snapshot this, but for now you'll have to wait about 15 seconds after you hit "Connect" in the browser for the bot to start.
