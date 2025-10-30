@@ -4,6 +4,7 @@
 
 venv
 .venv
+.env
 
 # secrets file for act, tool for local GitHub Actions testing
 .secrets

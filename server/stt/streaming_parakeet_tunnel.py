@@ -28,7 +28,7 @@ image = (
         }
     )
     .apt_install("ffmpeg")
-    .pip_install(
+    .uv_pip_install(
         "hf_transfer==0.1.9",
         "huggingface_hub[hf-xet]==0.31.2",
         "nemo_toolkit[asr]==2.3.0",
@@ -39,8 +39,9 @@ image = (
         "soundfile",
     )
     .entrypoint([])  # silence chatty logs by container on start
-    .pip_install(
+    .uv_pip_install(
         "uvicorn[standard]",
+        "wat"
     )
 )
 
@@ -108,7 +109,7 @@ class Transcriber:
             self.model.cfg.decoding.strategy = "greedy_batch"
             self.model.change_decoding_strategy(self.model.cfg.decoding)
 
-        torchaudio.set_audio_backend("soundfile")
+        # torchaudio.set_audio_backend("soundfile")
 
         self.silero_vad, utils = torch.hub.load(
             repo_or_dir='snakers4/silero-vad',
