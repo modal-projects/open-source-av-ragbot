@@ -149,8 +149,10 @@ class ModalRag(FrameProcessor):
         vector_index = ChromaVectorIndex().get_vector_index()
         self.retriever = vector_index.as_retriever(similarity_top_k=similarity_top_k)
         self.similarity_top_k = similarity_top_k
-        for _ in range(4):
+        print("Warming up retriever...")
+        for i in range(4):
             self.retriever.retrieve("What GPUs can I use with Modal?")
+            print(f"Queried retriever {i+1} times for warmup")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
 
