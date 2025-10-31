@@ -58,7 +58,7 @@ export default function App() {
       <ConsoleTemplate
         titleText="Open Source AV RAGbot"
         logoComponent={
-          <Logo width="auto" height={26} className="vkui:w-auto" />
+          <Logo width="auto" height={26} className="w-auto" />
         }
         transportType="smallwebrtc"
         connectParams={{
