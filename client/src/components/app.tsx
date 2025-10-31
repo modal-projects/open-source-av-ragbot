@@ -11,12 +11,12 @@ import { Links } from "./links";
 
 export default function App() {
   const injectMessageRef = useRef<
-    ((message: Pick<ConversationMessage, "role" | "content">) => void) | null
+    ((message: Pick<ConversationMessage, "role" | "parts">) => void) | null
   >(null);
 
   const handleOnInjectMessage = useCallback(
     (
-      injectFn: (message: Pick<ConversationMessage, "role" | "content">) => void
+      injectFn: (message: Pick<ConversationMessage, "role" | "parts">) => void
     ) => {
       injectMessageRef.current = injectFn;
     },
@@ -45,7 +45,7 @@ export default function App() {
         if (content) {
           injectMessageRef.current({
             role: "system",
-            content,
+            parts: [{ createdAt: new Date().toISOString(), final: true, text: content }],
           });
         }
       }
@@ -56,13 +56,13 @@ export default function App() {
   return (
     <FullScreenContainer>
       <ConsoleTemplate
-        title="Open Source AV RAGbot"
+        titleText="Open Source AV RAGbot"
         logoComponent={
           <Logo width="auto" height={26} className="vkui:w-auto" />
         }
         transportType="smallwebrtc"
         connectParams={{
-          connectionUrl: "/offer",
+          webrtcUrl: "/offer",
         }}
         transportOptions={{
           waitForICEGathering: true,
@@ -72,10 +72,9 @@ export default function App() {
             },
           ],
         }}
-        noUserVideo={true}
-        conversationElementProps={{
-          assistantLabel: "moe-and-dal",
-        }}
+        noScreenControl
+        noUserVideo
+        assistantLabelText="moe-and-dal"
         onInjectMessage={handleOnInjectMessage}
         onServerMessage={handleOnServerMessage}
       />
