@@ -1,8 +1,4 @@
 import asyncio
-from pathlib import Path
-import sys
-# import socket
-from struct import pack, unpack
 import time
 import json
 
@@ -18,49 +14,30 @@ def chunk_audio(audio, desired_frame_size):
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install(
-        "git",
-        "libogg-dev",
-        "libvorbis-dev",
-        "libopus-dev",
-        "libopusfile-dev",
-        "libopusenc-dev",
-        "libflac-dev",
-    )
     .uv_pip_install(
         "kokoro>=0.9.4",
         "soundfile",
         "fastapi[standard]",
-        "torchaudio",
-        "transformers",
-        "torch",
-        "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
+        "librosa",
         "uvicorn[standard]",
     )
-    .uv_pip_install(
-        "librosa",
-    )
-    # .add_local_dir(Path(__file__).parent / "assets", "/voice_samples")
+
 )
 app = modal.App("kokoro-tts")
 
 with image.imports():
-    import torchaudio as ta 
-    from fastapi.responses import StreamingResponse
     from kokoro import KPipeline
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-    # from pyogg import OpusEncoder
     import librosa
     import threading
     import uvicorn
-    from fastapi import FastAPI
-    from pyogg import OpusEncoder
     
 
 
 
 kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
 
+webapp = None
 
 @app.cls(
     image=image,
@@ -77,14 +54,6 @@ class KokoroTTS:
 
         
         
-        # from modal._tunnel import _forward as get_tunnel
-        # kokoro_tts_dict.put("server_ready", False)
-        # try:
-        #     self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
-        #     self.tunnel = await self.tunnel_manager.__aenter__()
-        # except Exception as e:
-        #     print(f"❌ Error starting tunnel: {e}")
-        # print(f"Tunnel started: {self.host}:{self.port}")
         try:
         
             self.model = KPipeline(lang_code='a')
@@ -92,40 +61,22 @@ class KokoroTTS:
 
             print("🔥 Warming up the model...")
             # warm up the model\[Kokoro](/kˈOkəɹO/)
-            self._is_live = False
             warmup_runs = 20
             warm_up_prompt = "Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job."
             for _ in range(warmup_runs):
                 for _ in self._stream_tts(warm_up_prompt):
                     pass
-            self._is_live = True
             print("✅ Model warmed up!")
 
-            # Create an Opus encoder
-            # self.opus_encoder = OpusEncoder()
-            # self.opus_encoder.set_application("audio")
-            # self.opus_encoder.set_sampling_frequency(24000)
-            # self.opus_encoder.set_channels(1)
 
-            # desired_frame_duration = 60/1000 # milliseconds
-            # self.desired_frame_size = int(desired_frame_duration * 24000)
-            # self.opus_encoder.set_frame_size(self.desired_frame_size)
+            self.webapp = FastAPI()
 
-            web_app = FastAPI()
-
-            @web_app.websocket("/ws")
+            @self.webapp.websocket("/ws")
             async def run_with_websocket(ws: WebSocket):
 
                 prompt_queue = asyncio.Queue()
                 audio_queue = asyncio.Queue()
 
-                # vad = self.VADIterator(
-                #     self.silero_vad, 
-                #     threshold = 0.4,
-                #     sampling_rate = SAMPLE_RATE,
-                #     min_silence_duration_ms = 500,
-                #     speech_pad_ms = 100,
-                # )
 
                 async def recv_loop(ws, prompt_queue):
                     while True:
@@ -167,19 +118,6 @@ class KokoroTTS:
                     while True:
                         audio = await audio_queue.get()
                         
-                        # for chunk in chunk_audio(audio, self.desired_frame_size*2):
-                        #     effective_frame_size = len(chunk) // 2
-                        #     if effective_frame_size < self.desired_frame_size:
-                        #         chunk += (
-                        #             b"\x00"
-                        #             * ((self.desired_frame_size - effective_frame_size)
-                        #             * 2
-                        #             * 1)
-                        #         )
-                        #     opus_packet = self.opus_encoder.encode(chunk)
-                        #     await ws.send_bytes(opus_packet)
-                        #     print(f"sending audio data: {len(opus_packet)} bytes")
-                        # encoded_audio = base64.b64encode(audio)
                         await ws.send_bytes(audio)
                         print(f"sending audio data: {len(audio)} bytes")
 
@@ -201,7 +139,7 @@ class KokoroTTS:
                     raise e
 
             def start_server():
-                uvicorn.run(web_app, host="0.0.0.0", port=8000)
+                uvicorn.run(self.webapp, host="0.0.0.0", port=8000)
 
             self.server_thread = threading.Thread(target=start_server, daemon=True)
             self.server_thread.start()
@@ -212,46 +150,7 @@ class KokoroTTS:
             websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
             kokoro_tts_dict.put("websocket_url", websocket_url)
             print(f"Websocket URL: {websocket_url}")
-            
-            # self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # self.sock.bind(("0.0.0.0", self.port))
-            # self.sock.listen(1)
-
-            # async def client_handler(reader, writer):
-            #     print("Started new connection...")
-            #     # asyncio.sleep(0.5)
-            #     while True:
-            #         prompt = b""
-            #         async for chunk in recvbuffer(reader):
-            #             if chunk is None:
-            #                 print("Received None chunk")
-            #                 continue
-            #             prompt += chunk
-                    
-            #         if not prompt:
-            #             await asyncio.sleep(0.001)
-            #             continue
-            #         prompt = prompt.decode("utf-8").strip()
-                    
-
-            #         print(f"Received prompt: {prompt}")
-
-            #         if prompt == "<close>":
-            #             print("Closing connection...")
-            #             await sendbuffer(writer, "<close>".encode("utf-8"))
-            #             break
-            #         for chunk in self._stream_tts(prompt):
-            #             print(f"Sending data of length {len(chunk)}")
-            #             await sendbuffer(writer, chunk)
-            #         await sendbuffer(writer, "<tts_end>".encode("utf-8"))
-
-            #     writer.close()
-            #     await writer.wait_closed()
-            #     print("Connection closed")
-
-            # self.server = await asyncio.start_server(client_handler, host='0.0.0.0', port=8000)
-            # addrs = ', '.join(str(sock.getsockname()) for sock in self.server.sockets)
-            # print(f'Serving on {addrs}')
+        
 
         except Exception as e:
             self.exit()
@@ -265,125 +164,10 @@ class KokoroTTS:
     # def host(self):
     #     return self.tunnel.tcp_socket[0]
     
-    # @modal.method()
-    # async def run(self, id: str, d: modal.Dict):
-        
-    #     from modal._tunnel import _forward as get_tunnel
-
-        
-    #     # print(f"Address put in dict: {self.host}:{self.port}")
-    #     server_task = None
-    #     # d.put("server_ready", False)
-    #     try:
-    #         self.tunnel_manager = modal.forward(port=8000, unencrypted=True)
-    #         self.tunnel = await self.tunnel_manager.__aenter__()
-    #     except Exception as e:
-    #         print(f"❌ Error starting tunnel: {e}")
-    #     print(f"Tunnel started: {self.host}:{self.port}")
-    #     async def run_server():
-    #         async with self.server:
-    #             d.put("host", self.host)
-    #             d.put("port", self.port)
-    #             d.put("server_ready", True)
-    #             await self.server.serve_forever()
-    #     try:
-
-    #         server_task = asyncio.create_task(run_server())
-    #         running = await d.get.aio(id)
-    #         print(f"Running: {running}")
-    #         while running:
-    #             await asyncio.sleep(1.0)
-    #             running = await d.get.aio(id)
-    #             print(f"Running: {running}")
-                
-
-    #     except Exception as e:
-    #         print(f"❌ Error in run: {e}")
-    #         raise e
-    #     finally:
-    #         if server_task:
-    #             server_task.cancel()
-    #             server_task = None
-    #         d.put("server_ready", False)
-
-    # @modal.exit()
-    # async def exit(self):
-    #     await self.tunnel_manager.__aexit__(*sys.exc_info())
-    #     print("Tunnel stopped")
-    
-
-    # @modal.fastapi_endpoint(docs=True, method="POST")
-    # async def tts(self, prompt: str):
-    #     # Return the audio as a streaming response with appropriate MIME type.
-    #     # This allows for browsers to playback audio directly.
-    #     return StreamingResponse(
-    #         content=self._stream_tts(prompt),
-    #         media_type="audio/wav",
-    #         headers={"Content-Disposition": 'attachment; filename="output.wav"'},
-    #     )
-
     @modal.asgi_app()
-    def webapp(self):
+    def web_endpoint(self):
         
-        web_app = FastAPI()
-
-        @web_app.websocket("/ws")
-        async def run_with_websocket(ws: WebSocket):
-
-            prompt_queue = asyncio.Queue()
-            audio_queue = asyncio.Queue()
-
-            # vad = self.VADIterator(
-            #     self.silero_vad, 
-            #     threshold = 0.4,
-            #     sampling_rate = SAMPLE_RATE,
-            #     min_silence_duration_ms = 500,
-            #     speech_pad_ms = 100,
-            # )
-
-            async def recv_loop(ws, prompt_queue):
-                while True:
-                    data = await ws.receive_text()
-                    prompt = data.strip()
-                    await prompt_queue.put(prompt)
-                    print(f"Received prompt: {prompt}")
-                    
-            async def inference_loop(prompt_queue, audio_queue):
-                while True:
-                    prompt = await prompt_queue.get()
-                    print(f"Received prompt: {prompt}")
-                    start_time = time.perf_counter()
-                    for chunk in self._stream_tts(prompt):
-                        await audio_queue.put(chunk)
-                        print(f"Sending audio data to queue: {len(chunk)} bytes")
-                    end_time = time.perf_counter()
-                    print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
-
-                        
-            async def send_loop(audio_queue, ws):
-                while True:
-                    audio = await audio_queue.get()
-                    await ws.send_bytes(audio)
-                    print(f"sending audio data: {len(audio)} bytes")
-
-            await ws.accept()
-
-            try:
-                tasks = [
-                    asyncio.create_task(recv_loop(ws, prompt_queue)),
-                    asyncio.create_task(inference_loop(prompt_queue, audio_queue)),
-                    asyncio.create_task(send_loop(audio_queue, ws)),
-                ]
-                await asyncio.gather(*tasks)
-            except WebSocketDisconnect:
-                print("WebSocket disconnected")
-                await ws.close(code=1000)
-            except Exception as e:
-                print("Exception:", e)
-                await ws.close(code=1011)  # internal error
-                raise e
-
-        return web_app
+        return self.webapp
 
         
     def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
@@ -419,14 +203,14 @@ class KokoroTTS:
                 
                 # Convert torch tensor to bytes efficiently
                 try:
-                    # Handle tensor format - might be (batch, samples) or just (samples,)
-                    if chunk.dim() > 1:
-                        audio_tensor = chunk[0]  # Take first batch if batched
-                    else:
-                        audio_tensor = chunk
+                    # # Handle tensor format - might be (batch, samples) or just (samples,)
+                    # if chunk.dim() > 1:
+                    #     audio_tensor = chunk[0]  # Take first batch if batched
+                    # else:
+                    #     audio_tensor = chunk
                     
                     # Ensure tensor is on CPU and convert to numpy for efficiency
-                    audio_numpy = audio_tensor.cpu().numpy()
+                    audio_numpy = chunk.cpu().numpy()
 
                     a, b = librosa.effects.trim(audio_numpy, top_db=20)[1]
                     a = int(a*0.9)
@@ -438,21 +222,6 @@ class KokoroTTS:
                     # Clamp to [-1, 1] range and scale to int16 range
                     audio_numpy = audio_numpy.clip(-1.0, 1.0)
                     pcm_data = (audio_numpy * 32767).astype('int16')
-                    
-                    # if not header_sent:
-                    #     # Send WAV header only for the first chunk
-                    #     # This is much more efficient than full WAV file per chunk
-                    #     wav_header = self._create_wav_header(
-                    #         sample_rate=self.model.sr,
-                    #         channels=1,
-                    #         bits_per_sample=16,
-                    #         # Use a large data size for streaming (will be ignored by most players)
-                    #         estimated_data_size=1000000  
-                    #     )
-                    #     yield wav_header + pcm_data.tobytes()
-                    #     header_sent = True
-                    # else:
-                    #     # For subsequent chunks, just send raw PCM data
                     yield pcm_data.tobytes()
                     
                 except Exception as e:
@@ -475,11 +244,7 @@ class KokoroTTS:
 def get_kokoro_server_url():
 
     try:
-        return KokoroTTS().tts.get_web_url()
+        return KokoroTTS().web_endpoint.get_web_url()
     except Exception as e:
-        try:
-            KokoroTTSCls = modal.Cls.from_name("kokoro-tts", "KokoroTTS")
-            return KokoroTTSCls().tts.get_web_url()
-        except Exception as e:
-            print(f"❌ Error getting Kokoro server URL: {e}")
-            return None
+        print(f"❌ Error getting Kokoro server URL: {e}")
+        return None

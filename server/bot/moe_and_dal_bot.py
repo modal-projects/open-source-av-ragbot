@@ -191,10 +191,8 @@ async def run_bot(
         speaker_mixer = UnisonSpeakerMixer(speakers=["moe", "dal"])
         processors += [
             ParallelPipeline(
-                [
-                    moe_tts,
-                    dal_tts,
-                ],
+                [moe_tts],
+                [dal_tts],
             ),
             speaker_mixer,
             ta,
