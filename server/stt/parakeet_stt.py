@@ -8,6 +8,8 @@ import base64
 
 import modal
 
+from server import SERVICES_REGION
+
 app = modal.App("parakeet-transcription")
 
 model_cache = modal.Volume.from_name("parakeet-model-cache", create_if_missing=True)
@@ -78,12 +80,13 @@ with image.imports():
 
 @app.cls(
     volumes={"/cache": model_cache}, 
-    gpu=["L40S", "A100", "A100-80GB"], 
+    gpu=["A100", "L4", "L40S"], 
     image=image,
     # enable_memory_snapshot=True,
     # experimental_options={"enable_gpu_snapshot": True},
-    region='us-east-1',
+    region=SERVICES_REGION,
     min_containers=1,
+    
 )
 @modal.concurrent(max_inputs=20)
 class Transcriber:
@@ -160,9 +163,10 @@ class Transcriber:
     def _start_server(self):
 
         import threading
-
         import uvicorn
         from fastapi import FastAPI
+
+        self._client_sessions_calls = {}
 
         self.web_app = FastAPI()
 
@@ -190,6 +194,8 @@ class Transcriber:
                     try:
                         json_data = json.loads(msg)
                         if "type" in json_data:
+                            if json_data["type"] == "start_client_session":
+                                self.register_client.spawn(modal.Dict())
                             if json_data["type"] == "set_vad":
                                 self.use_vad = json_data["vad"]
                                 continue
@@ -341,11 +347,7 @@ class Transcriber:
         print(f"Registering client {client_id}")
         d.put("url", self.websocket_url)
         while True:
-            if await d.get.aio(client_id):
-                asyncio.sleep(0.5)
-            else:
-                print(f"Client {client_id} closed")
-                return True
+            asyncio.sleep(1.0)
         
 
     def transcribe(self, audio_data) -> str:

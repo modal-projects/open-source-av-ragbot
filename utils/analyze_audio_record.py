@@ -22,7 +22,7 @@ def extract_audio_from_mov(input_mov_path, output_audio_path):
         print(f"An error occurred: {e}")
 
 # Example usage:
-input_file = "/Users/shababo/Desktop/sub_second_wstunnel_localrag_maybe02.mp4"  # Replace with the actual path to your .mov file
+input_file = "/Users/shababo/Desktop/optimized_rag.mp4"  # Replace with the actual path to your .mov file
 output_file = "extracted_audio.mp3" # Or .wav, .ogg, etc.
 
 extract_audio_from_mov(input_file, output_file)

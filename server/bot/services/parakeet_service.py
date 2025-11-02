@@ -25,15 +25,6 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
     ):
         SegmentedSTTService.__init__(self, **kwargs)
         ModalWebsocketService.__init__(self, **kwargs)
-        # modal_ws_kwargs = {}
-        # if "websocket_url" in kwargs:
-        #     modal_ws_kwargs["websocket_url"] = kwargs.pop("websocket_url")
-        # if "dict_name" in kwargs:
-        #     modal_ws_kwargs["dict_name"] = kwargs.pop("dict_name")
-        # if "dict_url_key" in kwargs:
-        #     modal_ws_kwargs["dict_url_key"] = kwargs.pop("dict_url_key")
-        # if "reconnect_on_error" in kwargs:
-        #     modal_ws_kwargs["reconnect_on_error"] = kwargs.pop("reconnect_on_error", True)
         
     def _get_websocket(self):
         """Get the current WebSocket connection.

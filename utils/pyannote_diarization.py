@@ -36,10 +36,10 @@ def diarize():
     # apply pretrained pipeline (with optional progress hook)
     with ProgressHook() as hook:
         output = pipeline(
-            "/data/nyc_test2.wav",
+            "/data/female_voice.wav",
             num_speakers=2,
             hook=hook
-        )  # runs locally
+        )  
 
     # print the result
     print(output.speaker_diarization)

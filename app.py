@@ -3,6 +3,8 @@ from pathlib import Path
 
 import modal
 
+from server import BOT_REGION
+
 MODELS_DIR = Path("/models")
 
 app = modal.App("moe-and-dal-ragbot")
@@ -19,7 +21,7 @@ bot_image = (
         "ffmpeg",
     )
     .uv_pip_install(
-        "pipecat-ai[webrtc,openai,silero,google,local-smart-turn,noisereduce]==0.0.91",
+        "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile]==0.0.91",
         "websocket-client",
         "aiofiles",
         "llama-index",
@@ -27,7 +29,9 @@ bot_image = (
         "fastapi[standard]",
         "llama-index-vector-stores-chroma",
         "chromadb",
+        "huggingface_hub[hf_transfer]",
     )
+    .pip_install("optimum[onnxruntime-gpu]", extra_options="-U --upgrade-strategy eager")
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
         "HF_HOME": str(MODELS_DIR),
@@ -46,57 +50,69 @@ with bot_image.imports():
 
     from server.bot.moe_and_dal_bot import run_bot
 
-@app.function(
+@app.cls(
     image=bot_image,
-    gpu="l40s",
+    gpu=["a100","l40s", "l4"],
     timeout=30 * MINUTES,
     min_containers=1,
-    region='us-east-1',
+    region=BOT_REGION,
     volumes={
         MODELS_DIR: models_volume,
         "/chroma": chroma_db_volume,
         "/modal_docs": modal_docs_volume,
     },
+    cpu=8,
+    # 16 GB
+    memory=16384, 
+    secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-async def serve_bot(d: modal.Dict):
-    """Launch the bot process with WebRTC connection and run the bot pipeline.
+class BotServer:
 
-    Args:
-        d (modal.Dict): A dictionary containing the WebRTC offer and ICE servers configuration.
+    @modal.enter()
+    def load(self):
+        from server.bot.processors.modal_rag import ChromaVectorDB
+        self.chroma_db = ChromaVectorDB()
 
-    Raises:
-        RuntimeError: If the bot pipeline fails to start or encounters an error.
-    """
-    
+    @modal.method()
+    async def serve_bot(self, d: modal.Dict):
+        """Launch the bot process with WebRTC connection and run the bot pipeline.
 
-    try:
+        Args:
+            d (modal.Dict): A dictionary containing the WebRTC offer and ICE servers configuration.
 
-        offer = await d.get.aio("offer")
-        ice_servers = await d.get.aio("ice_servers")
-        ice_servers = [
-            IceServer(
-                **ice_server,
-            )
-            for ice_server in ice_servers
-        ]
+        Raises:
+            RuntimeError: If the bot pipeline fails to start or encounters an error.
+        """
+        
 
-        webrtc_connection = SmallWebRTCConnection(ice_servers)
-        await webrtc_connection.initialize(sdp=offer["sdp"], type=offer["type"])
+        try:
 
-        @webrtc_connection.event_handler("closed")
-        async def handle_disconnected(webrtc_connection: SmallWebRTCConnection):
-            logger.info("WebRTC connection to bot closed.")
+            offer = await d.get.aio("offer")
+            ice_servers = await d.get.aio("ice_servers")
+            ice_servers = [
+                IceServer(
+                    **ice_server,
+                )
+                for ice_server in ice_servers
+            ]
 
-        print("Starting bot process.")
-        bot_task = asyncio.create_task(run_bot(webrtc_connection))
+            webrtc_connection = SmallWebRTCConnection(ice_servers)
+            await webrtc_connection.initialize(sdp=offer["sdp"], type=offer["type"])
 
-        answer = webrtc_connection.get_answer()
-        await d.put.aio("answer", answer)
+            @webrtc_connection.event_handler("closed")
+            async def handle_disconnected(webrtc_connection: SmallWebRTCConnection):
+                logger.info("WebRTC connection to bot closed.")
 
-        await bot_task
+            print("Starting bot process.")
+            bot_task = asyncio.create_task(run_bot(webrtc_connection, self.chroma_db))
 
-    except Exception as e:
-        raise RuntimeError(f"Failed to start bot pipeline: {e}")
+            answer = webrtc_connection.get_answer()
+            await d.put.aio("answer", answer)
+
+            await bot_task
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to start bot pipeline: {e}")
 
 
 frontend_image = (
@@ -146,7 +162,7 @@ def serve_frontend():
             await d.put.aio("ice_servers", _ICE_SERVERS)
             await d.put.aio("offer", offer)
 
-            serve_bot.spawn(d)
+            BotServer().serve_bot.spawn(d)
 
             while True:
                 answer = await d.get.aio("answer")

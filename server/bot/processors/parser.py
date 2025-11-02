@@ -223,6 +223,9 @@ class ModalRagStreamingJsonParser():
 
     async def handle_code_blocks_complete(self, code_blocks: List[str]):
         """Handle completion of the code_blocks array."""
+
+        # for code_block in code_blocks:
+            #
         # Send code blocks as structured data
         await self.service.push_frame(RTVIServerMessageFrame(
             data={

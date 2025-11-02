@@ -9,16 +9,15 @@ from pipecat.frames.frames import (
     SpriteFrame,
     UserStoppedSpeakingFrame,
 )
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorQueue
 
 
 def get_frames(substring_match: str):
 
     sprites = []
-    script_dir = os.path.dirname(__file__)
-
+    parent_dir = os.path.dirname(os.path.dirname(__file__))
     # Get all PNG files from the assets directory and sort them
-    assets_dir = os.path.join(script_dir, "assets")
+    assets_dir = os.path.join(parent_dir, "assets", "animation_frames")
     for filename in sorted(os.listdir(assets_dir)):
         if substring_match in filename and filename.endswith('.png'):
             full_path = os.path.join(assets_dir, filename)
@@ -52,20 +51,26 @@ class MoeDalBotAnimation(FrameProcessor):
             direction: The direction of frame flow in the pipeline
         """
         
-
+        await super().process_frame(frame, direction)
         # Switch to talking animation when bot starts speaking
         if isinstance(frame, BotStartedSpeakingFrame):
+            print("Received BotStartedSpeakingFrame")
             if not self._is_talking:
+                self.__input_queue = FrameProcessorQueue()
                 await self.push_frame(self._talking_frames)
                 self._is_talking = True
         # Return to static frame when bot stops speaking
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            print("Received BotStoppedSpeakingFrame")
+            self.__input_queue = FrameProcessorQueue()
             await self.push_frame(self._listening_frames)
             self._is_talking = False
         # Switch to thinking animation when user stops speaking
         elif isinstance(frame, UserStoppedSpeakingFrame):
+            print("Received UserStoppedSpeakingFrame")
+            self.__input_queue = FrameProcessorQueue()
             await self.push_frame(self._thinking_frames)
             self._is_talking = False
-        await super().process_frame(frame, direction)
+
         await self.push_frame(frame, direction)
         

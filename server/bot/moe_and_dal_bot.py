@@ -22,6 +22,7 @@ from loguru import logger
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 
@@ -41,11 +42,12 @@ from pipecat.frames.frames import LLMRunFrame
 
 from .services.parakeet_service import ModalSegmentedSTTService
 from .services.kokoro_websocket_service import KokoroTTSService
-from .services.modal_rag_service import ModalRagLLMService
+from .processors.unison_speaker_mixer import UnisonSpeakerMixer
+from .services.modal_rag_service import ModalVLLMService
 from .processors.text_aggregator import ModalRagTextAggregator
-from .processors.modal_rag import ModalRag, get_system_prompt
+from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 
-from .avatar.animation import MoeDalBotAnimation
+from .avatar.animation import MoeDalBotAnimation, get_frames
 from .processors.parser import ModalRagStreamingJsonParser
 
 import modal
@@ -63,10 +65,12 @@ _MOE_AND_DAL_FRAME_RATE = 12
 _MOE_AND_DAL_FRAME_WIDTH = 1024
 _MOE_AND_DAL_FRAME_HEIGHT = 576
 
+_DEFAULT_ENABLE_VIDEO = True
 
 async def run_bot(
     webrtc_connection: SmallWebRTCConnection,
-    enable_video: bool = False,
+    chroma_db: ChromaVectorDB,
+    enable_video: bool = _DEFAULT_ENABLE_VIDEO,
 ):
     """Main bot execution function.
 
@@ -108,10 +112,10 @@ async def run_bot(
         audio_passthrough=True,
     )
 
-    modal_rag = ModalRag(similarity_top_k=5)
+    modal_rag = ModalRag(chroma_db=chroma_db, similarity_top_k=3, num_adjacent_nodes=2)
 
-    func = modal.Function.from_name("vllm-service", "serve")
-    llm_url = func.get_web_url() + "/v1"
+    vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
+    llm_url = vllm_dict.get("vllm_url")
 
     # Initialize OpenAI API compatibleLLM service
     # llm = OpenAILLMService(
@@ -127,7 +131,7 @@ async def run_bot(
 
     # json_parser = ModalRagStreamingJsonParser()
 
-    llm = ModalRagLLMService(
+    llm = ModalVLLMService(
         model="Qwen/Qwen3-4B-Instruct-2507",
         api_key = "super-secret-key",
         base_url = llm_url,
@@ -157,46 +161,60 @@ async def run_bot(
         user_params=LLMUserAggregatorParams(aggregation_timeout=0.05),
     )
 
-    if enable_video:
-        ta = MoeDalBotAnimation()
-    else:
-        ta = None
-
-    tts = KokoroTTSService(
-        text_aggregator=ModalRagTextAggregator(),
-        # pause_frame_processing=True,
-    )
-
     # RTVI events for Pipecat client UI
-    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
+    rtvi = RTVIProcessor()
 
     processors = [
         transport.input(),
+        rtvi,
         stt,
         modal_rag,
         context_aggregator.user(),
         llm,
         # json_parser,
-        tts,
-        rtvi,
+        
     ]
-    if enable_video: # only add animation processor if video is enabled
-        processors.append(ta)
+    
+    # only add animation processor and dual speaker setup if video is enabled
+    if enable_video:
+        ta = MoeDalBotAnimation()
+        moe_tts = KokoroTTSService(
+            speaker="moe",
+            voice="am_puck",
+            speed=1.35,
+        )
+        dal_tts = KokoroTTSService(
+            speaker="dal",
+            voice="am_onyx",
+            speed=1.35,
+        )
+        speaker_mixer = UnisonSpeakerMixer(speakers=["moe", "dal"])
+        processors += [
+            ParallelPipeline(
+                [
+                    moe_tts,
+                    dal_tts,
+                ],
+            ),
+            speaker_mixer,
+            ta,
+        ]
+    else:
+        processors.append(KokoroTTSService())
+
     processors += [
         transport.output(),
         context_aggregator.assistant(),
     ]
+
     pipeline = Pipeline(
         processors=processors,
     )
-
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
             allow_interruptions=True,
             enable_metrics=True,
-            report_only_initial_ttfb=True,
         ),
         observers=[RTVIObserver(rtvi)],
     )
@@ -207,9 +225,6 @@ async def run_bot(
         await rtvi.set_bot_ready()
         await task.queue_frame(LLMRunFrame())
         
-        
-        
-
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Pipecat Client disconnected")
@@ -219,12 +234,8 @@ async def run_bot(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Pipecat Client connected")
-        # Kick off the conversation
-        # await task.queue_frame(LLMRunFrame())
+        await task.queue_frame(get_frames("listening"))
         
-
-    
-
     runner = PipelineRunner()
     await runner.run(task)
 

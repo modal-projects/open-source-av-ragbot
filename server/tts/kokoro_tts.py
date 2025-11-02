@@ -4,9 +4,11 @@ import sys
 # import socket
 from struct import pack, unpack
 import time
-import re
+import json
 
 import modal
+
+from server import SERVICES_REGION
 
 def chunk_audio(audio, desired_frame_size):
     for i in range(0, len(audio), desired_frame_size):
@@ -18,12 +20,12 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install(
         "git",
-        # "libogg-dev",
-        # "libvorbis-dev",
-        # "libopus-dev",
-        # "libopusfile-dev",
-        # "libopusenc-dev",
-        # "libflac-dev",
+        "libogg-dev",
+        "libvorbis-dev",
+        "libopus-dev",
+        "libopusfile-dev",
+        "libopusenc-dev",
+        "libflac-dev",
     )
     .uv_pip_install(
         "kokoro>=0.9.4",
@@ -32,7 +34,7 @@ image = (
         "torchaudio",
         "transformers",
         "torch",
-        # "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
+        "pyogg@git+https://github.com/TeamPyOgg/PyOgg.git",
         "uvicorn[standard]",
     )
     .uv_pip_install(
@@ -52,21 +54,19 @@ with image.imports():
     import threading
     import uvicorn
     from fastapi import FastAPI
-    # from pyogg import OpusEncoder
+    from pyogg import OpusEncoder
     
 
-_MODAL_PHONETIC_TEXT = "[Modal](/məʊdᵊl/)"
-_MOE_PHONETIC_TEXT = "[Moe](/məʊ/)"
-_DAL_PHONETIC_TEXT = "[Dal](/dæl/)" # alt: dæl
+
 
 kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
 
 
 @app.cls(
     image=image,
-    gpu=["L40S", "A100", "A100-80GB"],
+    gpu=["A100", "L40S"],
     min_containers=1, 
-    region='us-east-1',
+    region=SERVICES_REGION,
     # enable_memory_snapshot=True,
     # experimental_options={"enable_gpu_snapshot": True},
 )
@@ -107,8 +107,9 @@ class KokoroTTS:
             # self.opus_encoder.set_sampling_frequency(24000)
             # self.opus_encoder.set_channels(1)
 
-            desired_frame_duration = 60/1000 # milliseconds
-            self.desired_frame_size = int(desired_frame_duration * 24000)
+            # desired_frame_duration = 60/1000 # milliseconds
+            # self.desired_frame_size = int(desired_frame_duration * 24000)
+            # self.opus_encoder.set_frame_size(self.desired_frame_size)
 
             web_app = FastAPI()
 
@@ -128,21 +129,38 @@ class KokoroTTS:
 
                 async def recv_loop(ws, prompt_queue):
                     while True:
-                        data = await ws.receive_text()
-                        prompt = data.strip()
-                        await prompt_queue.put(prompt)
-                        print(f"Received prompt: {prompt}")
+                        msg = await ws.receive_text()
+                        try:
+                            json_data = json.loads(msg)
+                            if "type" in json_data:
+                                if json_data["type"] == "start_client_session":
+                                    self.register_client.spawn(modal.Dict())
+                                elif json_data["type"] == "prompt":
+                                    print(f"Received prompt: {json_data['text']} with voice {json_data['voice']}")
+                                    await prompt_queue.put(json_data)
+                                    
+                                else:
+                                    continue
+                            else:
+                                continue
+                        except Exception as e:
+                            continue
+                        
                         
                 async def inference_loop(prompt_queue, audio_queue):
                     while True:
-                        prompt = await prompt_queue.get()
-                        print(f"Received prompt: {prompt}")
-                        start_time = time.perf_counter()
-                        for chunk in self._stream_tts(prompt):
-                            await audio_queue.put(chunk)
-                            print(f"Sending audio data to queue: {len(chunk)} bytes")
-                        end_time = time.perf_counter()
-                        print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
+                        try:
+                            prompt_msg = await prompt_queue.get()
+                            print(f"Received prompt msg: {prompt_msg}")
+                            start_time = time.perf_counter()
+                            for chunk in self._stream_tts(prompt_msg['text'], voice=prompt_msg['voice']):
+                                await audio_queue.put(chunk)
+                                print(f"Sending audio data to queue: {len(chunk)} bytes")
+                            end_time = time.perf_counter()
+                            print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
+
+                        except Exception as e:
+                            continue
 
                             
                 async def send_loop(audio_queue, ws):
@@ -161,6 +179,7 @@ class KokoroTTS:
                         #     opus_packet = self.opus_encoder.encode(chunk)
                         #     await ws.send_bytes(opus_packet)
                         #     print(f"sending audio data: {len(opus_packet)} bytes")
+                        # encoded_audio = base64.b64encode(audio)
                         await ws.send_bytes(audio)
                         print(f"sending audio data: {len(audio)} bytes")
 
@@ -367,20 +386,10 @@ class KokoroTTS:
         return web_app
 
         
-    def _stream_tts(self, prompt: str):
+    def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
 
-        
-        # The \b symbol in a regex pattern represents a "word boundary".
-        # It matches the position between a word character (like a letter or number) and a non-word character (like a space or punctuation), 
-        # or the start/end of the string. This ensures that only whole words are matched and replaced, not parts of longer words.
-        prompt = re.sub(r'\bModal\b', _MODAL_PHONETIC_TEXT, prompt)
-        prompt = re.sub(r'\bmodal\b', _MODAL_PHONETIC_TEXT, prompt)
-        prompt = re.sub(r'\bMoe\b', _MOE_PHONETIC_TEXT, prompt)
-        prompt = re.sub(r'\bmoe\b', _MOE_PHONETIC_TEXT, prompt)
-        prompt = re.sub(r'\bDal\b', _DAL_PHONETIC_TEXT, prompt)
-        prompt = re.sub(r'\bdal\b', _DAL_PHONETIC_TEXT, prompt)
-
-        print(f"Phoenticized Prompt: {prompt}")
+        if voice is None:
+            voice = 'af_aoede'
 
         try:
 
@@ -395,8 +404,8 @@ class KokoroTTS:
             
             for (gs, ps, chunk) in self.model(
                 prompt, 
-                voice='am_puck',
-                speed = 1.2,
+                voice=voice,
+                speed = speed,
             ):
                 if first_chunk_time is None:
                     first_chunk_time = time.time()
@@ -419,7 +428,7 @@ class KokoroTTS:
                     # Ensure tensor is on CPU and convert to numpy for efficiency
                     audio_numpy = audio_tensor.cpu().numpy()
 
-                    a, b = librosa.effects.trim(audio_numpy, top_db=30)[1]
+                    a, b = librosa.effects.trim(audio_numpy, top_db=20)[1]
                     a = int(a*0.9)
                     b = len(audio_numpy) #int(len(audio_numpy)-(len(audio_numpy)-b)*0.9)
                     print(f"Trimmed {len(audio_numpy)} samples to {b-a} samples")

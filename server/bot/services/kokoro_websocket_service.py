@@ -3,7 +3,10 @@
 import traceback
 from typing import AsyncGenerator, Optional
 from loguru import logger
+import json
+import re
 
+# from pyogg import OpusDecoder
 from pipecat.frames.frames import (
     ErrorFrame, 
     Frame, 
@@ -11,33 +14,48 @@ from pipecat.frames.frames import (
     EndFrame, 
     CancelFrame, 
     TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+    InterruptionFrame,
 )
 from pipecat.services.tts_service import WebsocketTTSService
+from pipecat.processors.frame_processor import FrameDirection
 
 from websockets.asyncio.client import connect as websocket_connect
 from websockets.protocol import State
-import json
+
+from server.bot.processors.unison_speaker_mixer import TTSSpeakerAudioRawFrame
 
 import modal
-import uuid
 
+_MODAL_PHONETIC_TEXT = "[Modal](/məʊdᵊl/)"
+_MOE_PHONETIC_TEXT = "[Moe](/məʊ/)"
+_DAL_PHONETIC_TEXT = "[Dal](/dæl/)" # alt: dæl
 
 class KokoroTTSService(WebsocketTTSService):
     def __init__(
         self, 
-        # websocket_url: str = "wss://modal-labs-shababo-dev--realtime-stt-transcriber-webapp.modal.run/ws", 
-        # websocket_url: str = "wss://modal-labs-shababo-dev--kokoro-tts-kokorotts-webapp.modal.run/ws", 
-        websocket_url: str = "wss://30fq5i3jeaicmk.r447.modal.host/ws",
+        speaker: str = None,
+        voice: str = None,
+        speed: float = 1.0,
         **kwargs
     ):
-        super().__init__(**kwargs)
-        self._id = str(uuid.uuid4())
+
+        super().__init__(
+            pause_frame_processing=True,
+            push_stop_frames=True,
+            push_text_frames=False,
+            stop_frame_timeout_s=1.0,
+            **kwargs
+        )
+        self._speaker = speaker
+        self._voice = voice
+        self._speed = speed
+        
         tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
         self._websocket_url = tts_dict.get("websocket_url")
         self._receive_task = None
-        # self.opus_decoder = OpusDecoder()
-        # self.opus_decoder.set_channels(1)
-        # self.opus_decoder.set_sampling_frequency(24000)
+        self._running = False
 
     async def _report_error(self, error: ErrorFrame):
         await self._call_event_handler("on_connection_error", error.error)
@@ -143,35 +161,34 @@ class KokoroTTSService(WebsocketTTSService):
         await super().cancel(frame)
         await self._disconnect()
 
+    async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        """Push a frame and handle state changes.
+
+        Args:
+            frame: The frame to push.
+            direction: The direction to push the frame.
+        """
+        
+        if isinstance(frame, (TTSStoppedFrame, InterruptionFrame)):
+            self._running = False
+
+        await super().push_frame(frame, direction)
+
     async def _receive_messages(self):
         """Receive and process messages from WebSocket.
         """
         async for message in self._get_websocket():
-            # if isinstance(message, str):
             try:
                 await self.stop_ttfb_metrics()
-                # decoded_message = self.opus_decoder.decode(memoryview(bytearray(message)))
-                # await self.push_frame(TTSAudioRawFrame(bytes(decoded_message), self.sample_rate, 1))
-                await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
+
+                if self._speaker:
+                    await self.push_frame(TTSSpeakerAudioRawFrame(message, self.sample_rate, 1, speaker=self._speaker))
+                else:
+                    await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
                 print(f"Received audio data of length {len(message)} bytes")
             except Exception as e:
                 logger.error(f"Error decoding audio: {e}:{traceback.format_exc()}")
-                # yield ErrorFrame(f"Error decoding audio: {e}")
-                # return
-                raise e
-                # await self.stop_processing_metrics()
-            # else:
-            #     logger.warning(f"Received non-string message: {type(message)}")
-
-    async def start_metrics(self):
-        """Start TTFB and processing metrics collection."""
-        # TTFB (Time To First Byte) metrics are currently disabled for Deepgram Flux.
-        # Ideally, TTFB should measure the time from when a user starts speaking
-        # until we receive the first transcript. However, Deepgram Flux delivers
-        # both the "user started speaking" event and the first transcript simultaneously,
-        # making this timing measurement meaningless in this context.
-        await self.start_ttfb_metrics()
-        await self.start_processing_metrics()
+                await self.push_error(ErrorFrame(f"Error decoding audio: {e}"))
     
     async def run_tts(self, prompt: str) -> AsyncGenerator[Frame, None]:
 
@@ -181,11 +198,33 @@ class KokoroTTSService(WebsocketTTSService):
             return
 
         try:
-            await self._websocket.send(prompt)
+
+            if not self._running:
+                await self.start_ttfb_metrics()
+                yield TTSStartedFrame()
+                self._running = True
+
+            # The \b symbol in a regex pattern represents a "word boundary".
+            # It matches the position between a word character (like a letter or number) and a non-word character (like a space or punctuation), 
+            # or the start/end of the string. This ensures that only whole words are matched and replaced, not parts of longer words.
+            prompt = re.sub(r'\bModal\b', _MODAL_PHONETIC_TEXT, prompt)
+            prompt = re.sub(r'\bmodal\b', _MODAL_PHONETIC_TEXT, prompt)
+            prompt = re.sub(r'\bMoe\b', _MOE_PHONETIC_TEXT, prompt)
+            prompt = re.sub(r'\bmoe\b', _MOE_PHONETIC_TEXT, prompt)
+            prompt = re.sub(r'\bDal\b', _DAL_PHONETIC_TEXT, prompt)
+            prompt = re.sub(r'\bdal\b', _DAL_PHONETIC_TEXT, prompt)
+
+            tts_msg = {
+                "type": "prompt",
+                "text": prompt.strip(),
+                "voice": self._voice,
+                "speed": self._speed,
+            }
+            print(f"Sending prompt: {tts_msg}")
+            await self._websocket.send(json.dumps(tts_msg))
         except Exception as e:
             logger.error(f"Failed to send audio to KokoroTTS: {e}")
             yield ErrorFrame(f"Failed to send audio to KokoroTTS:  {e}")
-            return
 
         yield None
 

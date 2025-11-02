@@ -11,16 +11,15 @@ from server.bot.processors.parser import ModalRagStreamingJsonParser
 import modal
 
 
-class ModalRagLLMService(OpenAILLMService):
+class ModalVLLMService(OpenAILLMService):
     def __init__(self, *args, **kwargs):
         if not kwargs.get("api_key"):
-            kwargs["api_key"] = "super-secret-key"
-        # func = modal.Function.from_name("vllm-service", "serve")
-        # llm_url = func.get_web_url() + "/v1"
-        vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
-        llm_url = vllm_dict.get("vllm_url")
+            kwargs["api_key"] = "super-secret-key"        
         if not kwargs.get("base_url"):
-            kwargs["base_url"] = llm_url
+            vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
+            kwargs["base_url"] = vllm_dict.get("vllm_url")
+        if not kwargs["base_url"].endswith("/v1"):
+            kwargs["base_url"] += "/v1"
         super().__init__(*args, **kwargs)
         
         # Create the JSON parser instance
@@ -28,15 +27,12 @@ class ModalRagLLMService(OpenAILLMService):
 
     @traced_llm
     async def _process_context(self, context: OpenAILLMContext):
-        import time
+
+        await self.start_ttfb_metrics()
+
         # Reset the JSON parser for this context
         self.json_parser.reset()
 
-        await self.start_ttfb_metrics()
-        waiting_for_first_chunk = True
-        # print(f"🚀 Starting time: {time.perf_counter()}")
-        
-        start_time = time.perf_counter()
         messages = context.get_messages()
         edited_messages = []
         for msg in messages[:-1]:
@@ -52,25 +48,13 @@ class ModalRagLLMService(OpenAILLMService):
         async for chunk in chunk_stream:
             
             if chunk.choices is None or len(chunk.choices) == 0:
-                print("received empty chunk")
                 continue
 
             if not chunk.choices[0].delta:
-                print("received chunk with no delta")
                 continue
 
             if chunk.choices[0].delta.content:
-                if waiting_for_first_chunk:
-                    await self.stop_ttfb_metrics()
-                    waiting_for_first_chunk = False
-                    print("received first chunk")
-                # print(f"🚀 Stopping time: {time.perf_counter()}")
-                # print(f"🚀 Content: {chunk.choices[0].delta.content}")
-                # print(f"🚀 Time taken: {time.perf_counter() - start_time:.2f} seconds")
-                # start_time = time.perf_counter()
-                # Process the content through our streaming JSON parser
+                await self.stop_ttfb_metrics()
                 await self.json_parser.process_chunk(chunk.choices[0].delta.content)
-        
-        print(f"🚀 Total time taken: {time.perf_counter() - start_time:.2f} seconds")
 
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import modal
 
-EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
+EMBEDDING_MODEL = "sentence-transformers/all-minilm-l6-v2"
 MODELS_DIR = Path("/models")
 
 import os
@@ -10,18 +10,20 @@ import time
 from pydantic import BaseModel, Field
 from huggingface_hub import snapshot_download
 import chromadb
-import torch
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.core.postprocessor import PrevNextNodePostprocessor
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import Frame, TranscriptionFrame
+from llama_index.core.storage.docstore import SimpleDocumentStore
+from llama_index.core import VectorStoreIndex
+from llama_index.core import load_index_from_storage
 
 this_dir = Path(__file__).parent
 
-class ChromaVectorIndex:
-    is_setup: bool = False
+class ChromaVectorDB:
 
     def __init__(self):
         self.is_setup = False
@@ -45,107 +47,116 @@ class ChromaVectorIndex:
         print("Setup function...")
         if not self.is_setup:
             print("Setup function... is_setup is False")
-            # check of models are already downloaded
-            if not (MODELS_DIR / EMBEDDING_MODEL).exists():
-                self.download_model()
-
-            torch.set_float32_matmul_precision("high")
-            # Load embedding model
-            self.embedding = HuggingFaceEmbedding(model_name=f"/models/{EMBEDDING_MODEL}", device="cuda")
-            self.is_setup = True
-
-        # Setup ChromaDB
-        self.chroma_client = chromadb.PersistentClient("/chroma")
-        self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
-        self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-        print(f"Chroma collection: {self.chroma_collection.count()}")
-        if self.chroma_collection.count() == 0:
-            self.create_vector_index()
-            
-            
-
-    def create_vector_index(self):
-        """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
-        
-        
-        print("Creating vector index...")
-        # self.setup()
-
-        try:
 
             create_start = time.perf_counter()
+            # check of models are already downloaded
+            if not (MODELS_DIR / EMBEDDING_MODEL).exists():
+                print(f"Downloading model {EMBEDDING_MODEL}...")
+                self.download_model()
 
-            # Load Modal docs
-            if not os.path.exists("/modal_docs/modal_docs.md"):
-                docs_vol = modal.Volume.from_name("modal_docs", create_if_missing=True)
-                with docs_vol.batch_upload() as batch:
-                    batch.put_file(this_dir.parent / "assets" / "modal_docs.md", "/modal_docs.md")
-                docs_vol.commit()
-                docs_vol.reload()
-            with open("/modal_docs/modal_docs.md") as f:
-                document = Document(text=f.read())
-
-            # node_parser = SemanticSplitterNodeParser(
-            #     buffer_size=1, breakpoint_percentile_threshold=95, embed_model=self.embedding
-            # )
-            # nodes = node_parser.get_nodes_from_documents([document])
-            node_parser = MarkdownNodeParser()
-            nodes = node_parser.get_nodes_from_documents([document])
-            print(f"Created {len(nodes)} nodes")
-            print(nodes[0].text)
-            print(nodes[100].text)
-
-
-            # make storage context
-            self.chroma_client.delete_collection("modal_rag")
-            self.chroma_collection = self.chroma_client.create_collection("modal_rag")
-            self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-            print(f"Chroma collection: {self.chroma_collection.count()}")            
-            storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
-
-            # Create index from docs in chroma vector store
-            vector_index = VectorStoreIndex(
-                nodes, 
-                storage_context=storage_context, 
-                embed_model=self.embedding
+            # torch.set_float32_matmul_precision("high")
+            # Load embedding model
+            self.embedding = HuggingFaceEmbedding(
+                model_name=f"/models/{EMBEDDING_MODEL}", device="cuda",
+                # backend="onnx",
+                model_kwargs={"torch_dtype": "float16"},
             )
+            
+            # Setup ChromaDB
+            self.chroma_db_dir = f"/chroma/chroma_db_{EMBEDDING_MODEL}"
+            if not os.path.exists(self.chroma_db_dir):
+                os.makedirs(self.chroma_db_dir)
+            self.chroma_client = chromadb.PersistentClient(self.chroma_db_dir)
+            self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
+            self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+
+            print(f"Chroma collection: {self.chroma_collection.count()}")
+            try:
+                
+                if self.chroma_collection.count() == 0:
+                    self.embed_docs()
+                else:
+                          
+                    self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store, persist_dir=self.chroma_db_dir)              
+                    self._vector_index = load_index_from_storage(self.storage_context)
+            except Exception as e:
+                print(f"Error loading vector index: {type(e)}: {e}")
+                self.chroma_client.delete_collection(name="modal_rag")
+                self.chroma_collection = self.chroma_client.get_or_create_collection(name="modal_rag")
+                self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+                self.embed_docs()
+
             # test retrieval
-            test_nodes = vector_index.as_retriever(
-                similarity_top_k=5
-                ).retrieve("What GPUs can I use with Modal?")
+            test_nodes = self.query("What GPUs can I use with Modal?")
             print(test_nodes)
 
             total_time = time.perf_counter() - create_start
             print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
 
+            self.is_setup = True
+            
+            
+
+    def embed_docs(self):
+        """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
+        
+        
+        print("Embedding docs...")
+
+        try:
+
+            # Load Modal docs
+            if not os.path.exists("/modal_docs/modal_docs_short.md"):
+                docs_vol = modal.Volume.from_name("modal_docs", create_if_missing=True)
+                with docs_vol.batch_upload() as batch:
+                    batch.put_file(this_dir.parent / "assets" / "modal_docs_short.md", "/modal_docs_short.md")
+                docs_vol.commit()
+                docs_vol.reload()
+            with open("/modal_docs/modal_docs_short.md") as f:
+                document = Document(text=f.read())
+            print(f"Document: {document}")
+            print(f"Doc Id: {document.get_doc_id()}")
+            node_parser = MarkdownNodeParser()
+            nodes = node_parser.get_nodes_from_documents([document])
+            print(f"Created {len(nodes)} nodes")
+            print(nodes[0].text)
+            print(nodes[-1].text)
+
+            # Create index from docs in chroma vector store
+            # self.docstore.add_documents(nodes)
+            self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
+            self._vector_index = VectorStoreIndex(
+                nodes, 
+                storage_context=self.storage_context, 
+                embed_model=self.embedding,
+                store_nodes_override=True,
+            )
+
+            self._vector_index.storage_context.persist(self.chroma_db_dir)
+
+            
         except Exception as e:
             print(f"Error creating vector index: {type(e)}: {e}")
             raise e
 
-    def get_vector_index(self, force_rebuild: bool = False):
-        """Get the ChromaDB vector index."""
 
-        from llama_index.core import VectorStoreIndex
-        print("Getting vector index...")
-        self.setup()
+    def query(self, query: str, similarity_top_k: int = 3, num_adjacent_nodes: int = 2):
+        """Query the ChromaDB vector index."""
 
-        # self.create_vector_index.local(force_rebuild=force_rebuild)
-        
-        try:
-            get_index_start = time.perf_counter()
+        print(f"Querying with query: {query}\n\tand similarity_top_k: {similarity_top_k}\n\tand num_adjacent_nodes: {num_adjacent_nodes}")
+        nodes = self._vector_index.as_retriever(
+            similarity_top_k=similarity_top_k
+            ).retrieve(query)
 
-            vector_index = VectorStoreIndex.from_vector_store(
-                self.vector_store, embed_model=self.embedding
+        if num_adjacent_nodes > 0:
+            prev_next_postprocessor = PrevNextNodePostprocessor(
+                docstore=self._vector_index.docstore,
+                num_nodes=num_adjacent_nodes, # Fetch one node before and one node after
+                mode="both",
             )
+            nodes = prev_next_postprocessor.postprocess_nodes(nodes)
+        return nodes
 
-            total_time = time.perf_counter() - get_index_start
-            print(f"Vector index loaded successfully in {total_time:.2f}s")
-
-            return vector_index
-        
-        except Exception as e:
-            print(f"Error getting vector index: {type(e)}: {e}")
-            # return self.create_vector_index(force_rebuild=True)
 
 class ModalRagResponseStructure(BaseModel):
     spoke_response: str = Field(description="A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.")
@@ -153,60 +164,57 @@ class ModalRagResponseStructure(BaseModel):
     links: list[str] = Field(description="List of relevant URLs. These must be valid URLs pulled directly from the documentation context.")
 
 class ModalRag(FrameProcessor):
-    def __init__(self, similarity_top_k: int = 5, **kwargs):
-        super().__init__(**kwargs)  # ✅ Required
-        vector_index = ChromaVectorIndex().get_vector_index()
-        self.retriever = vector_index.as_retriever(similarity_top_k=similarity_top_k)
+    def __init__(self, chroma_db: ChromaVectorDB, similarity_top_k: int = 5, num_adjacent_nodes: int = 2, **kwargs):
+        super().__init__(**kwargs) 
+        self.chroma_db = chroma_db
+        
         self.similarity_top_k = similarity_top_k
-        print("Warming up retriever...")
-        for i in range(4):
-            self.retriever.retrieve("What GPUs can I use with Modal?")
-            print(f"Queried retriever {i+1} times for warmup")
+        self.num_adjacent_nodes = num_adjacent_nodes
+
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
 
-        await super().process_frame(frame, direction)  # ✅ Required
+        await super().process_frame(frame, direction)
 
-        # Your custom frame processing logic here
         if isinstance(frame, TranscriptionFrame):
             # Handle the frame
-            frame_text = frame.text
+            rag_context = ""
 
             rag_start = time.perf_counter()
             try:
-                retrieved_nodes = await self.retriever.aretrieve(frame_text)
+                retrieved_nodes = self.chroma_db.query(frame.text, similarity_top_k=self.similarity_top_k, num_adjacent_nodes=self.num_adjacent_nodes)
                 # Filter out nodes with None text and handle gracefully
                 valid_texts = []
-                for node_index,node in enumerate(retrieved_nodes):
+                for node_index, node in enumerate(retrieved_nodes):
                     if node.text is not None:
-                        valid_texts.append(f"Retrieved Modal Docs Section, Chunk {node_index+1}:\n{node.text}")
+                        valid_texts.append(f"Related Modal Docs Section, Chunk {node_index+1}:\n{node.text}")
                     else:
-                        print("⚠️ [Streaming] Found node with None text, skipping")
+                        print("⚠️ Found node with None text, skipping")
                 
                 context_str = "\n".join(valid_texts) if valid_texts else "No valid context found."
             except Exception as e:
-                print(f"⚠️ [Streaming] RAG retrieval failed: {type(e)}: {e}")
+                print(f"⚠️  RAG retrieval failed: {type(e)}: {e}")
                 raise e
             
             rag_time = time.perf_counter() - rag_start
-            print(f"⏱️ [Streaming] RAG retrieval took {rag_time:.3f}s")
+            print(f"⏱️ RAG retrieval took {rag_time:.3f}s")
             
             # Add RAG to most recent user message
-            frame_text += f"\nRetrieved Chunks from Documentation:\n"
-            frame_text += context_str
+            rag_context += f"\nRetrieved Chunks from Documentation:\n"
+            rag_context += context_str
 
             # Restate instructions
-            frame_text += f"\n\nYou MUST respond with ONLY the following JSON format (no additional text):"
-            frame_text += f"\n\n{{"
-            frame_text += f"\n    \"spoke_response\": str, A clean, conversational answer suitable for text-to-speech. The answer must be as useful and a concise as possible. DO NOT use technical symbols, code syntax, or complex formatting. DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
-            frame_text += f"\n    \"code_blocks\": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query."
-            frame_text += f"\n    \"links\": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs."
-            frame_text += f"\n}}"
-            frame_text += f"\nKeep your answer CONCISE and EFFECTIVE. USE AS SHORT OF SENTENCES AS POSSBILE, ESPECIALLY OUR FIRST SENTENCE! DO NOT introduce yourself unless you are asked to do so, and refer to yourself in the plural using words such as 'we' and 'us' and never 'I' or 'me'!"
+            rag_context += f"\n\nYou MUST respond with ONLY the following JSON format (no additional text):"
+            rag_context += f"\n\n{{"
+            rag_context += f"\n    \"spoke_response\": str, A clean, conversational answer suitable for text-to-speech. The answer must be as useful and a concise as possible. DO NOT use technical symbols, code syntax, or complex formatting. DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
+            rag_context += f"\n    \"code_blocks\": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query."
+            rag_context += f"\n    \"links\": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs."
+            rag_context += f"\n}}"
+            rag_context += f"\nKeep your answer CONCISE and EFFECTIVE. USE AS SHORT OF SENTENCES AS POSSBILE, ESPECIALLY OUR FIRST SENTENCE! DO NOT introduce yourself unless you are asked to do so, and refer to yourself in the plural using words such as 'we' and 'us' and never 'I' or 'me'!"
 
-            frame.text = frame_text
+            frame.text += rag_context
 
-        await self.push_frame(frame, direction)  # ✅ Required - pass frame through
+        await self.push_frame(frame, direction) 
 
 
 def get_system_prompt():
@@ -216,7 +224,7 @@ You are a conversational AI that is an expert in the Modal library.
 Your form is the Modal logo, a pair of characters named Moe and Dal. 
 Always refer to yourself as "Moe and Dal" and refer to yourself in the plural using words such as 'we' and 'us' and never 'I' or 'me'.
 Your job is to provide useful information about Modal and developing with Modal to the user.
-Section of Modal's documentation will be provided to you as context in the user's most.
+Potentially relevant sections of Modal's documentation will be provided to you as context in the user's most.
 
 Here is some baseline information on Modal and developing with Modal:
 # Modal Rules and Guidelines for LLMs
@@ -374,17 +382,19 @@ Logs:
 
 - When using `app.deploy()`, you can wrap it in a `with modal.enable_output():` block to get more output.
 
-Your answer will consist of three parts: an answer that will be played to audio as speech (`spoke_response`), snippets of useful code related to the user's query (`code_blocks`),
-and relevant links pulled directly from the documentation context (`links`).
-
 END OF MODAL INFO
 
 RESPONSE INSTRUCTIONS:
+
+Your answer will consist of three parts: an answer that will be played to audio as speech (`spoke_response`), snippets of useful code related to the user's query (`code_blocks`),
+and relevant links pulled directly from the documentation context (`links`).
+
+
 You MUST respond with ONLY the following JSON format (no additional text):
 
 {{
-    "spoke_response": str, A clean, conversational answer suitable for text-to-speech. The answer must be as useful and a concise as possible. DO NOT use technical symbols, code syntax, or complex formatting. DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
-    "code_blocks": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query.
+    "spoke_response": str, A clean, conversational answer suitable for text-to-speech by being concise, clear, and using relative short sentenices.  DO NOT use technical symbols, code syntax, or complex formatting because this will be spoken. For example, DO NOT use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and DO NOT use any non-speech compatible formatting."
+    "code_blocks": list[str], List of code blocks that that demonstrate relevant snippets related to or that answer the user's query. Keep these simple and effective and on topic. This is a good place to add things that are difficult to speak as well.
     "links": list[str], List of relevant URLs. These must be valid URLs pulled directly from the documentation context. If the URL path is relative, use the prefix https://modal.com/docs.
 }}
 """
