@@ -16,7 +16,7 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, TranscriptionFrame
+from pipecat.frames.frames import Frame, TranscriptionFrame, EndFrame, CancelFrame
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core import VectorStoreIndex
 from llama_index.core import load_index_from_storage
@@ -44,9 +44,8 @@ class ChromaVectorDB:
     def setup(self):
         """Setup the ChromaDB vector index."""
 
-        print("Setup function...")
+        print("Setup ChromaDB...")
         if not self.is_setup:
-            print("Setup function... is_setup is False")
 
             create_start = time.perf_counter()
             # check of models are already downloaded
@@ -76,7 +75,6 @@ class ChromaVectorDB:
                 if self.chroma_collection.count() == 0:
                     self.embed_docs()
                 else:
-                          
                     self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store, persist_dir=self.chroma_db_dir)              
                     self._vector_index = load_index_from_storage(self.storage_context)
             except Exception as e:
@@ -157,6 +155,14 @@ class ChromaVectorDB:
             nodes = prev_next_postprocessor.postprocess_nodes(nodes)
         return nodes
 
+    def save(self):
+        """Save the ChromaDB vector index."""
+        if self._vector_index:
+            self._vector_index.storage_context.persist(self.chroma_db_dir)
+            print(f"ChromaDB vector index saved to {self.chroma_db_dir}")
+        else:
+            print("No vector index to save")
+
 
 class ModalRagResponseStructure(BaseModel):
     spoke_response: str = Field(description="A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.")
@@ -170,6 +176,30 @@ class ModalRag(FrameProcessor):
         
         self.similarity_top_k = similarity_top_k
         self.num_adjacent_nodes = num_adjacent_nodes
+
+    async def _shutdown(self):
+        """Shutdown the RAG service."""
+        print("Shutting down RAG service...")
+        self.chroma_db.save()
+        self.chroma_db = None
+
+    async def stop(self, frame: EndFrame):
+        """Stop the  STT service.
+
+        Args:
+            frame: The end frame.
+        """
+        await super().stop(frame)
+        await self._shutdown()
+
+    async def cancel(self, frame: CancelFrame):
+        """Cancel the STT service.
+
+        Args:
+            frame: The cancel frame.
+        """
+        await super().cancel(frame)
+        await self._shutdown()
 
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):

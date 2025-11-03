@@ -18,143 +18,169 @@ image = (
         "kokoro>=0.9.4",
         "soundfile",
         "fastapi[standard]",
-        "librosa",
+        # "librosa",
         "uvicorn[standard]",
     )
-
+    .env({
+        "HF_HOME": "/cache",
+    })
 )
 app = modal.App("kokoro-tts")
 
 with image.imports():
-    from kokoro import KPipeline
+    from kokoro import KPipeline, KModel
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-    import librosa
+    from starlette.websockets import WebSocketState
+    # import librosa
     import threading
     import uvicorn
-    
+    from huggingface_hub import hf_hub_download
+    import torch
+    import soundfile as sf
+    import numpy as np
 
 
 
 kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
-
-webapp = None
+# vol = modal.Volume.from_name("kokoro-tts-vol", create_if_missing=True)
 
 @app.cls(
     image=image,
+    # volumes={"/cache": vol},
     gpu=["A100", "L40S"],
     min_containers=1, 
     region=SERVICES_REGION,
-    # enable_memory_snapshot=True,
-    # experimental_options={"enable_gpu_snapshot": True},
+    timeout= 60 * 60,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
-# @modal.concurrent(max_inputs=10)
+@modal.concurrent(max_inputs=10)
 class KokoroTTS:
-    @modal.enter()
+    @modal.enter(snap=True)
     async def load(self):
-
-        
         
         try:
         
-            self.model = KPipeline(lang_code='a')
-            self.audio_prompt_path = "/voice_samples/kitt_voice_sample_converted_short_24000.wav"
+            self.model = KModel().to("cuda").eval()
+            f = hf_hub_download(repo_id=self.model.repo_id, filename=f'voices/{"am_puck"}.pt')
+            pack = torch.load(f, weights_only=True)
+            for _ in range(4):
+                test_phonemes = """
+    həlˈO, wi ɑɹ mˈOˌA ænd dˈɑl, jʊɹ ɡˈIdz tə mˈOdᵊl. wˌi kæn hˈɛlp ju ɡɛt stˈɑɹTᵻd wɪð mˈOdᵊl, ɐ plˈætfˌɔɹm ðæt lˈɛts ju ɹˈʌn jʊɹ pˈIθˌɑn kˈOd ɪn ðə klˈWd wɪðˈWt wˈɜɹiɪŋ əbˈWt ði ˈɪnfɹəstɹˌʌkʧəɹ. wˌi kæn wˈɔk ju θɹu sˈɛTɪŋ ˌʌp ɐn əkˈWnt, ɪnstˈɔlɪŋ ðə pˈækɪʤ, ænd ɹˈʌnɪŋ jʊɹ fˈɜɹst ʤˈɑb.
+    """
+                self.model(test_phonemes, pack[len(test_phonemes)-1], 1.0, return_output=False)
 
-            print("🔥 Warming up the model...")
-            # warm up the model\[Kokoro](/kˈOkəɹO/)
-            warmup_runs = 20
-            warm_up_prompt = "Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job."
-            for _ in range(warmup_runs):
-                for _ in self._stream_tts(warm_up_prompt):
-                    pass
-            print("✅ Model warmed up!")
-
-
-            self.webapp = FastAPI()
-
-            @self.webapp.websocket("/ws")
-            async def run_with_websocket(ws: WebSocket):
-
-                prompt_queue = asyncio.Queue()
-                audio_queue = asyncio.Queue()
-
-
-                async def recv_loop(ws, prompt_queue):
-                    while True:
-                        msg = await ws.receive_text()
-                        try:
-                            json_data = json.loads(msg)
-                            if "type" in json_data:
-                                if json_data["type"] == "start_client_session":
-                                    self.register_client.spawn(modal.Dict())
-                                elif json_data["type"] == "prompt":
-                                    print(f"Received prompt: {json_data['text']} with voice {json_data['voice']}")
-                                    await prompt_queue.put(json_data)
-                                    
-                                else:
-                                    continue
-                            else:
-                                continue
-                        except Exception as e:
-                            continue
-                        
-                        
-                async def inference_loop(prompt_queue, audio_queue):
-                    while True:
-                        try:
-                            prompt_msg = await prompt_queue.get()
-                            print(f"Received prompt msg: {prompt_msg}")
-                            start_time = time.perf_counter()
-                            for chunk in self._stream_tts(prompt_msg['text'], voice=prompt_msg['voice']):
-                                await audio_queue.put(chunk)
-                                print(f"Sending audio data to queue: {len(chunk)} bytes")
-                            end_time = time.perf_counter()
-                            print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
-
-                        except Exception as e:
-                            continue
-
-                            
-                async def send_loop(audio_queue, ws):
-                    while True:
-                        audio = await audio_queue.get()
-                        
-                        await ws.send_bytes(audio)
-                        print(f"sending audio data: {len(audio)} bytes")
-
-                await ws.accept()
-
-                try:
-                    tasks = [
-                        asyncio.create_task(recv_loop(ws, prompt_queue)),
-                        asyncio.create_task(inference_loop(prompt_queue, audio_queue)),
-                        asyncio.create_task(send_loop(audio_queue, ws)),
-                    ]
-                    await asyncio.gather(*tasks)
-                except WebSocketDisconnect:
-                    print("WebSocket disconnected")
-                    await ws.close(code=1000)
-                except Exception as e:
-                    print("Exception:", e)
-                    await ws.close(code=1011)  # internal error
-                    raise e
-
-            def start_server():
-                uvicorn.run(self.webapp, host="0.0.0.0", port=8000)
-
-            self.server_thread = threading.Thread(target=start_server, daemon=True)
-            self.server_thread.start()
-
-            self.tunnel_ctx = modal.forward(8000)
-            self.tunnel = self.tunnel_ctx.__enter__()
-            print("forwarding get / 200 at url: ", self.tunnel.url)
-            websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
-            kokoro_tts_dict.put("websocket_url", websocket_url)
-            print(f"Websocket URL: {websocket_url}")
-        
 
         except Exception as e:
-            self.exit()
+            print(f"Error loading Kokoro TTS: {type(e)}: {e}")
             raise e
+
+    @modal.enter(snap=False)
+    def _start_server(self):
+
+        self.pipeline = KPipeline(model=self.model, lang_code='a', device="cuda")
+            
+        print("🔥 Warming up the model...")
+        # warm up the model\[Kokoro](/kˈOkəɹO/)
+        warmup_runs = 6
+        warm_up_prompt = "Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job."
+        for _ in range(warmup_runs):
+            for _ in self._stream_tts(warm_up_prompt):
+                pass
+        print("✅ Model warmed up!")
+
+        self.webapp = FastAPI()
+
+        @self.webapp.websocket("/ws")
+        async def run_with_websocket(ws: WebSocket):
+
+            prompt_queue = asyncio.Queue()
+            audio_queue = asyncio.Queue()
+
+
+            async def recv_loop(ws, prompt_queue):
+                while True:
+                    msg = await ws.receive_text()
+                    try:
+                        json_data = json.loads(msg)
+                        if "type" in json_data:
+                            if json_data["type"] == "start_client_session":
+                                self.register_client.spawn(modal.Dict())
+                            elif json_data["type"] == "prompt":
+                                print(f"Received prompt: {json_data['text']} with voice {json_data['voice']}")
+                                await prompt_queue.put(json_data)
+                                
+                            else:
+                                continue
+                        else:
+                            continue
+                    except Exception as e:
+                        continue
+                    
+                    
+            async def inference_loop(prompt_queue, audio_queue):
+                while True:
+                    try:
+                        prompt_msg = await prompt_queue.get()
+                        print(f"Received prompt msg: {prompt_msg}")
+                        start_time = time.perf_counter()
+                        for chunk in self._stream_tts(prompt_msg['text'], voice=prompt_msg['voice']):
+                            await audio_queue.put(chunk)
+                            print(f"Sending audio data to queue: {len(chunk)} bytes")
+                        end_time = time.perf_counter()
+                        print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
+
+                    except Exception as e:
+                        continue
+
+                        
+            async def send_loop(audio_queue, ws):
+                while True:
+                    audio = await audio_queue.get()
+                    
+                    await ws.send_bytes(audio)
+                    print(f"sending audio data: {len(audio)} bytes")
+
+            await ws.accept()
+
+            try:
+                tasks = [
+                    asyncio.create_task(recv_loop(ws, prompt_queue)),
+                    asyncio.create_task(inference_loop(prompt_queue, audio_queue)),
+                    asyncio.create_task(send_loop(audio_queue, ws)),
+                ]
+                await asyncio.gather(*tasks)
+            except WebSocketDisconnect:
+                print("WebSocket disconnected")
+                ws = None
+            except Exception as e:
+                print("Exception:", e)
+            finally:
+                if ws and ws.application_state is WebSocketState.CONNECTED:
+                    await ws.close(code=1011) # internal error
+                    ws = None
+                for task in tasks:
+                    if task.running():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                
+
+        def start_server():
+            uvicorn.run(self.webapp, host="0.0.0.0", port=8000)
+
+        self.server_thread = threading.Thread(target=start_server, daemon=True)
+        self.server_thread.start()
+
+        self.tunnel_ctx = modal.forward(8000)
+        self.tunnel = self.tunnel_ctx.__enter__()
+        print("forwarding get / 200 at url: ", self.tunnel.url)
+        self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
+        kokoro_tts_dict.put("websocket_url", self.websocket_url)
+        print(f"Websocket URL: {self.websocket_url}")
+        
         
     # @property
     # def port(self):
@@ -169,7 +195,22 @@ class KokoroTTS:
         
         return self.webapp
 
-        
+    @modal.method()
+    async def register_client(self, d: modal.Dict, client_id: str):
+        try:
+            print(f"Registering client {client_id}")
+            d.put("url", self.websocket_url)
+            
+            while not d.contains("client_id"):
+                await asyncio.sleep(0.100)
+                
+            while still_running := await d.get.aio("client_id"):
+                await asyncio.sleep(0.100)
+
+        except Exception as e:
+            print(f"Error registering client: {type(e)}: {e}")
+            
+
     def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
 
         if voice is None:
@@ -181,12 +222,11 @@ class KokoroTTS:
             stream_start = time.time()
             chunk_count = 0
             first_chunk_time = None
-            # header_sent = False
 
             # Generate streaming audio from the input text
             print(f"🎤 Starting streaming generation for prompt: {prompt}")
             
-            for (gs, ps, chunk) in self.model(
+            for (gs, ps, chunk) in self.pipeline(
                 prompt, 
                 voice=voice,
                 speed = speed,
@@ -212,9 +252,27 @@ class KokoroTTS:
                     # Ensure tensor is on CPU and convert to numpy for efficiency
                     audio_numpy = chunk.cpu().numpy()
 
-                    a, b = librosa.effects.trim(audio_numpy, top_db=20)[1]
+                    
+
+                    # Use soundfile's silence trimming if available.
+                    # soundfile does not have built-in trim, so we implement simple trimming here.
+                    # Trim leading and trailing silence below a threshold (e.g., -20 dBFS)
+
+                    def trim_silence(audio, threshold_db = -20):
+                        # Convert threshold from dB to amplitude
+                        threshold = 10 ** (threshold_db / 20.0)
+                        abs_audio = np.abs(audio)
+                        mask = abs_audio > threshold
+                        if not np.any(mask):
+                            # All silence, fallback to return the original array
+                            return 0, len(audio)
+                        start = np.argmax(mask)
+                        end = len(audio) - np.argmax(mask[::-1])
+                        return start, end
+
+                    a, b = trim_silence(audio_numpy, threshold_db=-20)
                     a = int(a*0.9)
-                    b = len(audio_numpy) #int(len(audio_numpy)-(len(audio_numpy)-b)*0.9)
+                    b = len(audio_numpy)
                     print(f"Trimmed {len(audio_numpy)} samples to {b-a} samples")
                     audio_numpy = audio_numpy[a:b]
                     

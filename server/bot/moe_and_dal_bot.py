@@ -40,8 +40,8 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_response import LLMUserAggregatorParams
 from pipecat.frames.frames import LLMRunFrame
 
-from .services.parakeet_service import ModalSegmentedSTTService
-from .services.kokoro_websocket_service import KokoroTTSService
+from .services.parakeet_service import ModalParakeetSegmentedSTTService
+from .services.kokoro_websocket_service import ModalKokoroTTSService
 from .processors.unison_speaker_mixer import UnisonSpeakerMixer
 from .services.modal_rag_service import ModalVLLMService
 from .processors.text_aggregator import ModalRagTextAggregator
@@ -106,7 +106,7 @@ async def run_bot(
         params=transport_params,
     )
 
-    stt = ModalSegmentedSTTService(
+    stt = ModalParakeetSegmentedSTTService(
         app_name="parakeet-transcription",
         cls_name="Transcriber",
         audio_passthrough=True,
@@ -178,12 +178,16 @@ async def run_bot(
     # only add animation processor and dual speaker setup if video is enabled
     if enable_video:
         ta = MoeDalBotAnimation()
-        moe_tts = KokoroTTSService(
+        moe_tts = ModalKokoroTTSService(
+            app_name="kokoro-tts",
+            cls_name="KokoroTTS",
             speaker="moe",
             voice="am_puck",
             speed=1.35,
         )
-        dal_tts = KokoroTTSService(
+        dal_tts = ModalKokoroTTSService(
+            app_name="kokoro-tts",
+            cls_name="KokoroTTS",
             speaker="dal",
             voice="am_onyx",
             speed=1.35,
@@ -198,7 +202,11 @@ async def run_bot(
             ta,
         ]
     else:
-        processors.append(KokoroTTSService())
+        processors.append(ModalKokoroTTSService(
+            app_name="kokoro-tts",
+            cls_name="KokoroTTS",
+            speed=1.35,
+        ))
 
     processors += [
         transport.output(),

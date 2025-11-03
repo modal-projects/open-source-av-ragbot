@@ -26,4 +26,5 @@ dependencies = [
     "matplotlib>=3.10.5",
     "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile] >=0.0.91",
     "fastapi>=0.120.1",
+    "kokoro>=0.9.4",
 ]

@@ -73,26 +73,25 @@ with image.imports():
     import logging
     import nemo.collections.asr as nemo_asr
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from starlette.websockets import WebSocketState
     from urllib.request import urlopen
     import torch
-    import torchaudio
 
 
 @app.cls(
     volumes={"/cache": model_cache}, 
     gpu=["A100", "L4", "L40S"], 
     image=image,
-    # enable_memory_snapshot=True,
-    # experimental_options={"enable_gpu_snapshot": True},
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
     region=SERVICES_REGION,
-    min_containers=1,
+    # min_containers=1,
     
 )
 @modal.concurrent(max_inputs=20)
 class Transcriber:
 
-    # @modal.enter(snap=True)
-    @modal.enter()
+    @modal.enter(snap=True)
     def load(self):
         
 
@@ -158,8 +157,7 @@ class Transcriber:
 
         print("GPU warmed up")
 
-    # @modal.enter(snap=False)
-    @modal.enter()
+    @modal.enter(snap=False)
     def _start_server(self):
 
         import threading
@@ -322,11 +320,21 @@ class Transcriber:
                 await asyncio.gather(*tasks)
             except WebSocketDisconnect:
                 print("WebSocket disconnected")
-                await ws.close(code=1000)
+                ws = None
             except Exception as e:
                 print("Exception:", e)
-                await ws.close(code=1011)  # internal error
-                raise e
+            finally:
+                if ws and ws.client_state is WebSocketState.CONNECTED:
+                    await ws.close(code=1011) # internal error
+                    ws = None
+                for task in tasks:
+                    if task.running():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+
 
         def start_server():
             uvicorn.run(self.web_app, host="0.0.0.0", port=8000)
@@ -344,10 +352,18 @@ class Transcriber:
 
     @modal.method()
     async def register_client(self, d: modal.Dict, client_id: str):
-        print(f"Registering client {client_id}")
-        d.put("url", self.websocket_url)
-        while True:
-            asyncio.sleep(1.0)
+        try:
+            print(f"Registering client {client_id}")
+            d.put("url", self.websocket_url)
+            
+            while not d.contains("client_id"):
+                await asyncio.sleep(0.100)
+                
+            while still_running := await d.get.aio("client_id"):
+                await asyncio.sleep(0.100)
+
+        except Exception as e:
+            print(f"❌ Error registering client: {type(e)}: {e}")
         
 
     def transcribe(self, audio_data) -> str:

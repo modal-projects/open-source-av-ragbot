@@ -108,7 +108,7 @@ if [[ "$DEPLOY_LLM" == "true" ]]; then
 fi
 
 if [[ "$DEPLOY_STT" == "true" ]]; then
-    deploy_service "STT Service" "server.stt.streaming_parakeet_tunnel"
+    deploy_service "STT Service" "server.stt.parakeet_stt"
     ((deployed_count++))
 fi
 

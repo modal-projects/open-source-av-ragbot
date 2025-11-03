@@ -21,7 +21,7 @@ bot_image = (
         "ffmpeg",
     )
     .uv_pip_install(
-        "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile]==0.0.91",
+        "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile]==0.0.92",
         "websocket-client",
         "aiofiles",
         "llama-index",
@@ -54,7 +54,7 @@ with bot_image.imports():
     image=bot_image,
     gpu=["a100","l40s", "l4"],
     timeout=30 * MINUTES,
-    min_containers=1,
+    # min_containers=1,
     region=BOT_REGION,
     volumes={
         MODELS_DIR: models_volume,
@@ -65,10 +65,13 @@ with bot_image.imports():
     # 16 GB
     memory=16384, 
     secrets=[modal.Secret.from_name("huggingface-secret")],
+    experimental_options={"enable_gpu_snapshot": True},
+    enable_memory_snapshot=True,
+    max_inputs=1,
 )
 class BotServer:
 
-    @modal.enter()
+    @modal.enter(snap=True)
     def load(self):
         from server.bot.processors.modal_rag import ChromaVectorDB
         self.chroma_db = ChromaVectorDB()

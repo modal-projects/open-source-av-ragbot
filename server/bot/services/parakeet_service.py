@@ -25,23 +25,6 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
     ):
         SegmentedSTTService.__init__(self, **kwargs)
         ModalWebsocketService.__init__(self, **kwargs)
-        
-    def _get_websocket(self):
-        """Get the current WebSocket connection.
-
-        Returns the active WebSocket connection instance, raising an exception
-        if no connection is currently established.
-
-        Returns:
-            The active WebSocket connection instance.
-
-        Raises:
-            Exception: If no WebSocket connection is currently active.
-        """
-        print(f"Get WebSocket: {self._websocket_url}")
-        if self._websocket:
-            return self._websocket
-        raise Exception("Websocket not connected")
 
     def can_generate_metrics(self) -> bool:
         """Indicate that this service can generate usage metrics."""
@@ -59,12 +42,7 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
         print(f"Start: {self._websocket_url}")
         await super().start(frame)
         await self._connect()
-        # turn off vad
-        vad_msg = {
-            "type": "set_vad",
-            "vad": False
-        }
-        await self._websocket.send(json.dumps(vad_msg))
+        
 
     async def stop(self, frame: EndFrame):
         """Stop the Websocket service.
@@ -90,6 +68,28 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
     ):
         """Handle a transcription result with tracing."""
         pass
+
+
+class ModalParakeetSegmentedSTTService(ModalSegmentedSTTService):
+    def __init__(
+        self, 
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+
+    async def start(self, frame: StartFrame):
+        """Start the Parakeet service.
+
+        Args:
+            frame: The start frame.
+        """
+        await super().start(frame)
+        # turn off vad
+        vad_msg = {
+            "type": "set_vad",
+            "vad": False
+        }
+        await self._websocket.send(json.dumps(vad_msg))
 
     async def _receive_messages(self):
         """Receive and process messages from WebSocket.

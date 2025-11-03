@@ -62,6 +62,7 @@ class VLLMServer():
         import threading
         import requests
         import asyncio
+        import time
 
         def start_server():
 
@@ -109,6 +110,21 @@ class VLLMServer():
         while not await is_ready():
             await asyncio.sleep(1)
 
+        for _ in range(4):
+            start_time = time.perf_counter()
+            response = requests.post(
+                f"http://localhost:{VLLM_PORT}/v1/chat/completions", 
+                timeout=5,
+                json={
+                    "model": MODEL_NAME,
+                    "messages": [{"role": "user", "content": "Hello, how are you?"}],
+                }
+            )
+            print(response.json())
+            end_time = time.perf_counter()
+            print(f"Time taken: {end_time - start_time} seconds")
+
+
         self.tunnel_ctx = modal.forward(VLLM_PORT)
         self.tunnel = self.tunnel_ctx.__enter__()
         self.vllm_url = self.tunnel.url
@@ -119,4 +135,3 @@ class VLLMServer():
     def dummy(self):
         return True
     
-
