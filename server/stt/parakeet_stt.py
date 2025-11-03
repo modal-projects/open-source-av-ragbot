@@ -164,8 +164,6 @@ class Transcriber:
         import uvicorn
         from fastapi import FastAPI
 
-        self._client_sessions_calls = {}
-
         self.web_app = FastAPI()
 
         @self.web_app.websocket("/ws")

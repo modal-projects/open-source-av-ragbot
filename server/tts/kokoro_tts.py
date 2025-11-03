@@ -48,7 +48,7 @@ kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True
     image=image,
     # volumes={"/cache": vol},
     gpu=["A100", "L40S"],
-    min_containers=1, 
+    # min_containers=1, 
     region=SERVICES_REGION,
     timeout= 60 * 60,
     enable_memory_snapshot=True,
@@ -189,6 +189,10 @@ class KokoroTTS:
     # @property
     # def host(self):
     #     return self.tunnel.tcp_socket[0]
+
+    @modal.exit()
+    def exit(self):
+        self.tunnel_ctx.__exit__()
     
     @modal.asgi_app()
     def web_endpoint(self):
@@ -209,6 +213,10 @@ class KokoroTTS:
 
         except Exception as e:
             print(f"Error registering client: {type(e)}: {e}")
+
+    @modal.method()
+    def ping(self):
+        return "pong"
             
 
     def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
@@ -306,3 +314,26 @@ def get_kokoro_server_url():
     except Exception as e:
         print(f"❌ Error getting Kokoro server URL: {e}")
         return None
+
+@app.local_entrypoint()
+def warmup_snapshots():
+    kokoro_tts = KokoroTTS().with_options(scaledown_window=2)
+    num_cold_starts = 20
+    for _ in range(num_cold_starts):
+        start_time = time.time()
+        kokoro_tts().ping.remote()
+        end_time = time.time()
+        print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
+        time.sleep(5.0) # allow container to drain
+    print(f"Kokoro TTS cold starts: {num_cold_starts}")
+
+if __name__ == "__main__":
+    kokoro_tts = modal.Cls.from_name("kokoro-tts", "KokoroTTS").with_options(scaledown_window=2)
+    num_cold_starts = 20
+    for _ in range(num_cold_starts):
+        start_time = time.time()
+        kokoro_tts().ping.remote()
+        end_time = time.time()
+        print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
+        time.sleep(10.0) # allow container to drain
+    print(f"Kokoro TTS cold starts: {num_cold_starts}")

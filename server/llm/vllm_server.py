@@ -16,11 +16,11 @@ vllm_image = (
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
         "VLLM_USE_V1": "1",
         "VERBOSE": "DEBUG",
-        "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
-        "CUDA_CACHE_PATH": "/root/.cache/huggingface/.nv_cache",
-        "TORCHINDUCTOR_CACHE_DIR": "/root/.cache/huggingface/.inductor_cache",
-        "TRITON_CACHE_DIR": "/root/.cache/huggingface.triton_cache",
-        "VLLM_CACHE_ROOT": "/root/.cache/huggingface/.vllm_cache",
+        # "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
+        "CUDA_CACHE_PATH": "/.cache/huggingface/.nv_cache",
+        "TORCHINDUCTOR_CACHE_DIR": "/.cache/huggingface/.inductor_cache",
+        "TRITON_CACHE_DIR": "/.cache/huggingface.triton_cache",
+        "VLLM_CACHE_ROOT": "/.cache/huggingface/.vllm_cache",
         })
 )
 
@@ -45,8 +45,8 @@ VLLM_PORT = 8000
     # scaledown_window=15 * MINUTES,  # how long should we stay up with no requests?
     # timeout=10 * MINUTES,  # how long should we wait for container start?
     volumes={
-        "/root/.cache/huggingface": hf_cache_vol,
-        "/root/.cache/vllm": vllm_cache_vol,
+        "/.cache/huggingface": hf_cache_vol,
+        "/.cache/vllm": vllm_cache_vol,
     },
     min_containers=1,
     region="us-west-1",

@@ -9,9 +9,9 @@ MODELS_DIR = Path("/models")
 
 app = modal.App("moe-and-dal-ragbot")
 
-modal_docs_volume = modal.Volume.from_name("modal_docs", create_if_missing=True)
-models_volume = modal.Volume.from_name("models", create_if_missing=True)
-chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=True)
+# modal_docs_volume = modal.Volume.from_name("modal_docs", create_if_missing=True)
+# models_volume = modal.Volume.from_name("models", create_if_missing=True)
+# chroma_db_volume = modal.Volume.from_name("modal_rag_chroma", create_if_missing=True)
 
 # container specifications for the Pipecat pipeline
 bot_image = (
@@ -34,7 +34,7 @@ bot_image = (
     .pip_install("optimum[onnxruntime-gpu]", extra_options="-U --upgrade-strategy eager")
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
-        "HF_HOME": str(MODELS_DIR),
+        # "HF_HOME": str(MODELS_DIR),
     })
     .add_local_dir("server", remote_path="/root/server")
 )
@@ -54,13 +54,13 @@ with bot_image.imports():
     image=bot_image,
     gpu=["a100","l40s", "l4"],
     timeout=30 * MINUTES,
-    # min_containers=1,
+    min_containers=1,
     region=BOT_REGION,
-    volumes={
-        MODELS_DIR: models_volume,
-        "/chroma": chroma_db_volume,
-        "/modal_docs": modal_docs_volume,
-    },
+    # volumes={
+        # MODELS_DIR: models_volume,
+        # "/chroma": chroma_db_volume,
+        # "/modal_docs": modal_docs_volume,
+    # },
     cpu=8,
     # 16 GB
     memory=16384, 

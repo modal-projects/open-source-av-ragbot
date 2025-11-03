@@ -17,7 +17,6 @@ from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import Frame, TranscriptionFrame, EndFrame, CancelFrame
-from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core import VectorStoreIndex
 from llama_index.core import load_index_from_storage
 
@@ -37,8 +36,8 @@ class ChromaVectorDB:
     def download_model(self):
         from huggingface_hub import snapshot_download
         print("Downloading model...")
-        snapshot_download(repo_id=EMBEDDING_MODEL, local_dir=MODELS_DIR / EMBEDDING_MODEL)
-        print(f"Model downloaded to {MODELS_DIR / EMBEDDING_MODEL}")
+        snapshot_download(repo_id=EMBEDDING_MODEL)
+        # print(f"Model downloaded to {MODELS_DIR / EMBEDDING_MODEL}")
     
     # @modal.enter()
     def setup(self):
@@ -49,40 +48,41 @@ class ChromaVectorDB:
 
             create_start = time.perf_counter()
             # check of models are already downloaded
-            if not (MODELS_DIR / EMBEDDING_MODEL).exists():
-                print(f"Downloading model {EMBEDDING_MODEL}...")
-                self.download_model()
+            # if not (MODELS_DIR / EMBEDDING_MODEL).exists():
+            # print(f"Downloading model {EMBEDDING_MODEL}...")
+            # self.download_model()
 
             # torch.set_float32_matmul_precision("high")
             # Load embedding model
             self.embedding = HuggingFaceEmbedding(
-                model_name=f"/models/{EMBEDDING_MODEL}", device="cuda",
+               EMBEDDING_MODEL, 
+               device="cuda",
                 # backend="onnx",
                 model_kwargs={"torch_dtype": "float16"},
             )
             
             # Setup ChromaDB
-            self.chroma_db_dir = f"/chroma/chroma_db_{EMBEDDING_MODEL}"
-            if not os.path.exists(self.chroma_db_dir):
-                os.makedirs(self.chroma_db_dir)
-            self.chroma_client = chromadb.PersistentClient(self.chroma_db_dir)
+            # self.chroma_db_dir = f"/chroma/chroma_db_{EMBEDDING_MODEL}"
+            # if not os.path.exists(self.chroma_db_dir):
+            #     os.makedirs(self.chroma_db_dir)
+            self.chroma_client = chromadb.EphemeralClient()
             self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
             self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
 
-            print(f"Chroma collection: {self.chroma_collection.count()}")
-            try:
+            # print(f"Chroma collection: {self.chroma_collection.count()}")
+            # try:
                 
-                if self.chroma_collection.count() == 0:
-                    self.embed_docs()
-                else:
-                    self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store, persist_dir=self.chroma_db_dir)              
-                    self._vector_index = load_index_from_storage(self.storage_context)
-            except Exception as e:
-                print(f"Error loading vector index: {type(e)}: {e}")
-                self.chroma_client.delete_collection(name="modal_rag")
-                self.chroma_collection = self.chroma_client.get_or_create_collection(name="modal_rag")
-                self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-                self.embed_docs()
+            #     if self.chroma_collection.count() == 0:
+            self.embed_docs()
+            #     else:
+            #         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)              
+            #         self._vector_index = load_index_from_storage(self.storage_context)
+            # except Exception as e:
+            #     print(f"Error loading vector index: {type(e)}: {e}")
+            #     self.chroma_client.delete_collection(name="modal_rag")
+            #     self.chroma_collection = self.chroma_client.get_or_create_collection(name="modal_rag")
+            #     self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+            #     self.embed_docs()
 
             # test retrieval
             test_nodes = self.query("What GPUs can I use with Modal?")
@@ -104,13 +104,13 @@ class ChromaVectorDB:
         try:
 
             # Load Modal docs
-            if not os.path.exists("/modal_docs/modal_docs_short.md"):
-                docs_vol = modal.Volume.from_name("modal_docs", create_if_missing=True)
-                with docs_vol.batch_upload() as batch:
-                    batch.put_file(this_dir.parent / "assets" / "modal_docs_short.md", "/modal_docs_short.md")
-                docs_vol.commit()
-                docs_vol.reload()
-            with open("/modal_docs/modal_docs_short.md") as f:
+            # if not os.path.exists("/modal_docs/modal_docs_short.md"):
+            #     docs_vol = modal.Volume.from_name("modal_docs", create_if_missing=True)
+            #     with docs_vol.batch_upload() as batch:
+            #         batch.put_file(this_dir.parent / "assets" / "modal_docs_short.md", "/modal_docs_short.md")
+            #     docs_vol.commit()
+            #     docs_vol.reload()
+            with open(this_dir.parent / "assets" / "modal_docs_short.md") as f:
                 document = Document(text=f.read())
             print(f"Document: {document}")
             print(f"Doc Id: {document.get_doc_id()}")
@@ -130,7 +130,7 @@ class ChromaVectorDB:
                 store_nodes_override=True,
             )
 
-            self._vector_index.storage_context.persist(self.chroma_db_dir)
+            # self._vector_index.storage_context.persist(self.chroma_db_dir)
 
             
         except Exception as e:
@@ -177,29 +177,22 @@ class ModalRag(FrameProcessor):
         self.similarity_top_k = similarity_top_k
         self.num_adjacent_nodes = num_adjacent_nodes
 
-    async def _shutdown(self):
-        """Shutdown the RAG service."""
-        print("Shutting down RAG service...")
-        self.chroma_db.save()
-        self.chroma_db = None
 
-    async def stop(self, frame: EndFrame):
-        """Stop the  STT service.
+    # async def stop(self, frame: EndFrame):
+    #     """Stop the  STT service.
 
-        Args:
-            frame: The end frame.
-        """
-        await super().stop(frame)
-        await self._shutdown()
+    #     Args:
+    #         frame: The end frame.
+    #     """
+    #     await super().stop(frame)
 
-    async def cancel(self, frame: CancelFrame):
-        """Cancel the STT service.
+    # async def cancel(self, frame: CancelFrame):
+    #     """Cancel the STT service.
 
-        Args:
-            frame: The cancel frame.
-        """
-        await super().cancel(frame)
-        await self._shutdown()
+    #     Args:
+    #         frame: The cancel frame.
+    #     """
+    #     await super().cancel(frame)
 
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
