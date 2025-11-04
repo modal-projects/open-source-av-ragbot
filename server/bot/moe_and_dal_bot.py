@@ -40,10 +40,10 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_response import LLMUserAggregatorParams
 from pipecat.frames.frames import LLMRunFrame
 
-from .services.parakeet_service import ModalParakeetSegmentedSTTService
-from .services.kokoro_websocket_service import ModalKokoroTTSService
+from .services.modal_parakeet_service import ModalParakeetSegmentedSTTService
+from .services.modal_kokoro_service import ModalKokoroTTSService
 from .processors.unison_speaker_mixer import UnisonSpeakerMixer
-from .services.modal_rag_service import ModalVLLMService
+from .services.modal_vllm_service import ModalVLLMService
 from .processors.text_aggregator import ModalRagTextAggregator
 from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 
