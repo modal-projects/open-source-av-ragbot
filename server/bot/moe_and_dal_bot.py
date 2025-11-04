@@ -157,7 +157,6 @@ async def run_bot(
         modal_rag,
         context_aggregator.user(),
         llm,
-        # json_parser,
         
     ]
     
