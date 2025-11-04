@@ -107,7 +107,7 @@ class BotServer:
                 logger.info("WebRTC connection to bot closed.")
 
             print("Starting bot process.")
-            bot_task = asyncio.create_task(run_bot(webrtc_connection, self.chroma_db))
+            bot_task = asyncio.create_task(run_bot(webrtc_connection, self.chroma_db, enable_video=True))
 
             answer = webrtc_connection.get_answer()
             await d.put.aio("answer", answer)

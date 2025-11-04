@@ -95,7 +95,10 @@ class Transcriber:
     @modal.enter(snap=True)
     def load(self):
         
-
+        self.tunnel_ctx = None
+        self.tunnel = None
+        self.websocket_url = None
+        
         # silence chatty logs from nemo
         logging.getLogger("nemo_logger").setLevel(logging.CRITICAL)
 
@@ -341,14 +344,16 @@ class Transcriber:
         self.server_thread = threading.Thread(target=start_server, daemon=True)
         self.server_thread.start()
 
-    @modal.method()
-    async def register_client(self, d: modal.Dict, client_id: str):
-        try:
-            with modal.forward(UVICORN_PORT) as tunnel:
-                print(f"Registering client {client_id}")
-                websocket_url = tunnel.url.replace("https://", "wss://") + "/ws"
-                print(f"Websocket URL: {websocket_url}")
-                d.put("url", websocket_url)
+        self.tunnel_ctx = modal.forward(UVICORN_PORT)
+        self.tunnel = self.tunnel_ctx.__enter__()
+        self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
+        print(f"Websocket URL: {self.websocket_url}")
+
+        @modal.method()
+        async def register_client(self, d: modal.Dict, client_id: str):
+            try:
+                print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
+                d.put("url", self.websocket_url)
                 
                 while not d.contains("client_id"):
                     await asyncio.sleep(0.100)
@@ -356,10 +361,9 @@ class Transcriber:
                 while still_running := await d.get.aio("client_id"):
                     await asyncio.sleep(0.100)
 
-        except Exception as e:
-            print(f"Error registering client: {type(e)}: {e}")
-        
-
+            except Exception as e:
+                print(f"Error registering client: {type(e)}: {e}")
+                
     def transcribe(self, audio_data) -> str:
 
         with NoStdStreams():  # hide output, see https://github.com/NVIDIA/NeMo/discussions/3281#discussioncomment-2251217
@@ -372,6 +376,14 @@ class Transcriber:
     def webapp(self):
         
         return self.web_app
+
+    @modal.exit()
+    def exit(self):
+        if self.tunnel_ctx:
+            self.tunnel_ctx.__exit__()
+            self.tunnel_ctx = None
+            self.tunnel = None
+            self.websocket_url = None
 
 
 class NoStdStreams(object):

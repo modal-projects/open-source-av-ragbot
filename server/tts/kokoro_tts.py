@@ -56,32 +56,20 @@ kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True
 )
 @modal.concurrent(max_inputs=10)
 class KokoroTTS:
+
     @modal.enter()
     async def load(self):
         
-        try:
+        self.tunnel_ctx = None
+        self.tunnel = None
+        self.websocket_url = None
+
+
         
-            self.model = KModel().to("cuda").eval()
-    #         f = hf_hub_download(repo_id=self.model.repo_id, filename=f'voices/{"am_puck"}.pt')
-    #         pack = torch.load(f, weights_only=True)
-    #         for _ in range(4):
-    #             test_phonemes = """
-    # həlˈO, wi ɑɹ mˈOˌA ænd dˈɑl, jʊɹ ɡˈIdz tə mˈOdᵊl. wˌi kæn hˈɛlp ju ɡɛt stˈɑɹTᵻd wɪð mˈOdᵊl, ɐ plˈætfˌɔɹm ðæt lˈɛts ju ɹˈʌn jʊɹ pˈIθˌɑn kˈOd ɪn ðə klˈWd wɪðˈWt wˈɜɹiɪŋ əbˈWt ði ˈɪnfɹəstɹˌʌkʧəɹ. wˌi kæn wˈɔk ju θɹu sˈɛTɪŋ ˌʌp ɐn əkˈWnt, ɪnstˈɔlɪŋ ðə pˈækɪʤ, ænd ɹˈʌnɪŋ jʊɹ fˈɜɹst ʤˈɑb.
-    # """
-    #             self.model(test_phonemes, pack[len(test_phonemes)-1], 1.0, return_output=False)
-
-
-        except Exception as e:
-            print(f"Error loading Kokoro TTS: {type(e)}: {e}")
-            raise e
-
-    # @modal.enter(snap=False)
-    # def _start_server(self):
-
+        self.model = KModel().to("cuda").eval()
         self.pipeline = KPipeline(model=self.model, lang_code='a', device="cuda")
             
         print("🔥 Warming up the model...")
-        # warm up the model\[Kokoro](/kˈOkəɹO/)
         warmup_runs = 6
         warm_up_prompt = "Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job."
         for _ in range(warmup_runs):
@@ -172,6 +160,11 @@ class KokoroTTS:
 
         self.server_thread = threading.Thread(target=start_server, daemon=True)
         self.server_thread.start()
+
+        self.tunnel_ctx = modal.forward(_UVICORN_PORT)
+        self.tunnel = self.tunnel_ctx.__enter__()
+        self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
+        print(f"Websocket URL: {self.websocket_url}")
     
     @modal.asgi_app()
     def web_endpoint(self):
@@ -181,17 +174,14 @@ class KokoroTTS:
     @modal.method()
     async def register_client(self, d: modal.Dict, client_id: str):
         try:
-            with modal.forward(_UVICORN_PORT) as tunnel:
-                print(f"Registering client {client_id}")
-                websocket_url = tunnel.url.replace("https://", "wss://") + "/ws"
-                print(f"Websocket URL: {websocket_url}")
-                d.put("url", websocket_url)
+            print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
+            d.put("url", self.websocket_url)
+            
+            while not d.contains("client_id"):
+                await asyncio.sleep(0.100)
                 
-                while not d.contains("client_id"):
-                    await asyncio.sleep(0.100)
-                    
-                while still_running := await d.get.aio("client_id"):
-                    await asyncio.sleep(0.100)
+            while still_running := await d.get.aio("client_id"):
+                await asyncio.sleep(0.100)
 
         except Exception as e:
             print(f"Error registering client: {type(e)}: {e}")

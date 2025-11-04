@@ -39,7 +39,6 @@ class ModalSegmentedSTTService(SegmentedSTTService, ModalWebsocketService):
         Args:
             frame: The start frame containing initialization parameters and metadata.
         """
-        print(f"Start: {self._websocket_url}")
         await super().start(frame)
         await self._connect()
         
