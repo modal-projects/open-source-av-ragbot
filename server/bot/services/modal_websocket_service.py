@@ -13,24 +13,31 @@ import modal
 class ModalWebsocketService(WebsocketService):
     def __init__(
         self, 
-        app_name: str,
-        cls_name: str,
+        app_name: str = None,
+        cls_name: str = None,
+        websocket_url: str = None,
         reconnect_on_error: bool = True,
         **kwargs
     ):
         super().__init__(reconnect_on_error=reconnect_on_error, **kwargs)
-        self._websocket_url = None
+        self._websocket_url = websocket_url
         self._app_name = app_name
-        self._receive_task = None
         self._cls_name = cls_name
 
+        self._receive_task = None
+
         self.call_id = None
-        self.registry_dict = None
-        ws_service = modal.Cls.from_name(self._app_name, self._cls_name)()
         self.modal_client_id = str(uuid.uuid4())
         self.registry_dict = modal.Dict.from_name(f"{self.modal_client_id}-websocket-client-registry", create_if_missing=True)
         self.registry_dict.put(self.modal_client_id, True)
-        self.call_id = ws_service.register_client.spawn(self.registry_dict, self.modal_client_id)
+        if self._app_name and self._cls_name:
+            print(f"Spawning service for {self._app_name}.{self._cls_name} with client id {self.modal_client_id}")
+            ws_service = modal.Cls.from_name(self._app_name, self._cls_name)()
+            self.call_id = ws_service.register_client.spawn(self.registry_dict, self.modal_client_id)
+        elif not self._websocket_url:
+            raise Exception("Either app_name and cls_name or websocket_url must be provided")
+        else:
+            print(f"Using websocket URL: {self._websocket_url}")
         
 
     async def _report_error(self, error: ErrorFrame):
@@ -67,10 +74,11 @@ class ModalWebsocketService(WebsocketService):
             # Now close the websocket
             await self._disconnect_websocket()
 
-            self.registry_dict.put(self.modal_client_id, False)
-            self.call_id.gather()
-            self.call_id = None
-
+            if self.call_id:
+                self.registry_dict.put(self.modal_client_id, False)
+                self.call_id.gather()
+                self.call_id = None
+    
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
         finally:

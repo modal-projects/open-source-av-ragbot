@@ -18,7 +18,7 @@ image = (
         "kokoro>=0.9.4",
         "soundfile",
         "fastapi[standard]",
-        # "librosa",
+        "librosa",
         "uvicorn[standard]",
     )
     .env({
@@ -31,15 +31,15 @@ with image.imports():
     from kokoro import KPipeline, KModel
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
     from starlette.websockets import WebSocketState
-    # import librosa
+    import librosa
     import threading
     import uvicorn
     from huggingface_hub import hf_hub_download
     import torch
-    import soundfile as sf
-    import numpy as np
 
 
+_DEFAULT_VOICE = 'am_puck'
+_UVICORN_PORT = 8000
 
 kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
 # vol = modal.Volume.from_name("kokoro-tts-vol", create_if_missing=True)
@@ -48,35 +48,35 @@ kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True
     image=image,
     # volumes={"/cache": vol},
     gpu=["A100", "L40S"],
-    # min_containers=1, 
+    min_containers=1, 
     region=SERVICES_REGION,
     timeout= 60 * 60,
-    enable_memory_snapshot=True,
-    experimental_options={"enable_gpu_snapshot": True},
+    # enable_memory_snapshot=True,
+    # experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=10)
 class KokoroTTS:
-    @modal.enter(snap=True)
+    @modal.enter()
     async def load(self):
         
         try:
         
             self.model = KModel().to("cuda").eval()
-            f = hf_hub_download(repo_id=self.model.repo_id, filename=f'voices/{"am_puck"}.pt')
-            pack = torch.load(f, weights_only=True)
-            for _ in range(4):
-                test_phonemes = """
-    həlˈO, wi ɑɹ mˈOˌA ænd dˈɑl, jʊɹ ɡˈIdz tə mˈOdᵊl. wˌi kæn hˈɛlp ju ɡɛt stˈɑɹTᵻd wɪð mˈOdᵊl, ɐ plˈætfˌɔɹm ðæt lˈɛts ju ɹˈʌn jʊɹ pˈIθˌɑn kˈOd ɪn ðə klˈWd wɪðˈWt wˈɜɹiɪŋ əbˈWt ði ˈɪnfɹəstɹˌʌkʧəɹ. wˌi kæn wˈɔk ju θɹu sˈɛTɪŋ ˌʌp ɐn əkˈWnt, ɪnstˈɔlɪŋ ðə pˈækɪʤ, ænd ɹˈʌnɪŋ jʊɹ fˈɜɹst ʤˈɑb.
-    """
-                self.model(test_phonemes, pack[len(test_phonemes)-1], 1.0, return_output=False)
+    #         f = hf_hub_download(repo_id=self.model.repo_id, filename=f'voices/{"am_puck"}.pt')
+    #         pack = torch.load(f, weights_only=True)
+    #         for _ in range(4):
+    #             test_phonemes = """
+    # həlˈO, wi ɑɹ mˈOˌA ænd dˈɑl, jʊɹ ɡˈIdz tə mˈOdᵊl. wˌi kæn hˈɛlp ju ɡɛt stˈɑɹTᵻd wɪð mˈOdᵊl, ɐ plˈætfˌɔɹm ðæt lˈɛts ju ɹˈʌn jʊɹ pˈIθˌɑn kˈOd ɪn ðə klˈWd wɪðˈWt wˈɜɹiɪŋ əbˈWt ði ˈɪnfɹəstɹˌʌkʧəɹ. wˌi kæn wˈɔk ju θɹu sˈɛTɪŋ ˌʌp ɐn əkˈWnt, ɪnstˈɔlɪŋ ðə pˈækɪʤ, ænd ɹˈʌnɪŋ jʊɹ fˈɜɹst ʤˈɑb.
+    # """
+    #             self.model(test_phonemes, pack[len(test_phonemes)-1], 1.0, return_output=False)
 
 
         except Exception as e:
             print(f"Error loading Kokoro TTS: {type(e)}: {e}")
             raise e
 
-    @modal.enter(snap=False)
-    def _start_server(self):
+    # @modal.enter(snap=False)
+    # def _start_server(self):
 
         self.pipeline = KPipeline(model=self.model, lang_code='a', device="cuda")
             
@@ -104,9 +104,7 @@ class KokoroTTS:
                     try:
                         json_data = json.loads(msg)
                         if "type" in json_data:
-                            if json_data["type"] == "start_client_session":
-                                self.register_client.spawn(modal.Dict())
-                            elif json_data["type"] == "prompt":
+                            if json_data["type"] == "prompt":
                                 print(f"Received prompt: {json_data['text']} with voice {json_data['voice']}")
                                 await prompt_queue.put(json_data)
                                 
@@ -159,40 +157,21 @@ class KokoroTTS:
                 if ws and ws.application_state is WebSocketState.CONNECTED:
                     await ws.close(code=1011) # internal error
                     ws = None
-                for task in tasks:
-                    if task.running():
-                        task.cancel()
+                for task in tasks:                    
+                    if not task.done():
                         try:
+                            task.cancel()
                             await task
                         except asyncio.CancelledError:
                             pass
+
                 
 
         def start_server():
-            uvicorn.run(self.webapp, host="0.0.0.0", port=8000)
+            uvicorn.run(self.webapp, host="0.0.0.0", port=_UVICORN_PORT)
 
         self.server_thread = threading.Thread(target=start_server, daemon=True)
         self.server_thread.start()
-
-        self.tunnel_ctx = modal.forward(8000)
-        self.tunnel = self.tunnel_ctx.__enter__()
-        print("forwarding get / 200 at url: ", self.tunnel.url)
-        self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
-        kokoro_tts_dict.put("websocket_url", self.websocket_url)
-        print(f"Websocket URL: {self.websocket_url}")
-        
-        
-    # @property
-    # def port(self):
-    #     return self.tunnel.tcp_socket[1]
-    
-    # @property
-    # def host(self):
-    #     return self.tunnel.tcp_socket[0]
-
-    @modal.exit()
-    def exit(self):
-        self.tunnel_ctx.__exit__()
     
     @modal.asgi_app()
     def web_endpoint(self):
@@ -202,14 +181,17 @@ class KokoroTTS:
     @modal.method()
     async def register_client(self, d: modal.Dict, client_id: str):
         try:
-            print(f"Registering client {client_id}")
-            d.put("url", self.websocket_url)
-            
-            while not d.contains("client_id"):
-                await asyncio.sleep(0.100)
+            with modal.forward(_UVICORN_PORT) as tunnel:
+                print(f"Registering client {client_id}")
+                websocket_url = tunnel.url.replace("https://", "wss://") + "/ws"
+                print(f"Websocket URL: {websocket_url}")
+                d.put("url", websocket_url)
                 
-            while still_running := await d.get.aio("client_id"):
-                await asyncio.sleep(0.100)
+                while not d.contains("client_id"):
+                    await asyncio.sleep(0.100)
+                    
+                while still_running := await d.get.aio("client_id"):
+                    await asyncio.sleep(0.100)
 
         except Exception as e:
             print(f"Error registering client: {type(e)}: {e}")
@@ -218,15 +200,12 @@ class KokoroTTS:
     def ping(self):
         return "pong"
             
-
     def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
 
         if voice is None:
-            voice = 'af_aoede'
+            voice = _DEFAULT_VOICE
 
         try:
-
-            
             stream_start = time.time()
             chunk_count = 0
             first_chunk_time = None
@@ -248,39 +227,14 @@ class KokoroTTS:
                 if chunk_count % 10 == 0:  # Log every 10th chunk
                     print(f"📊 Streamed {chunk_count} chunks so far")
                 
-                
-                # Convert torch tensor to bytes efficiently
                 try:
-                    # # Handle tensor format - might be (batch, samples) or just (samples,)
-                    # if chunk.dim() > 1:
-                    #     audio_tensor = chunk[0]  # Take first batch if batched
-                    # else:
-                    #     audio_tensor = chunk
                     
                     # Ensure tensor is on CPU and convert to numpy for efficiency
                     audio_numpy = chunk.cpu().numpy()
 
-                    
-
-                    # Use soundfile's silence trimming if available.
-                    # soundfile does not have built-in trim, so we implement simple trimming here.
-                    # Trim leading and trailing silence below a threshold (e.g., -20 dBFS)
-
-                    def trim_silence(audio, threshold_db = -20):
-                        # Convert threshold from dB to amplitude
-                        threshold = 10 ** (threshold_db / 20.0)
-                        abs_audio = np.abs(audio)
-                        mask = abs_audio > threshold
-                        if not np.any(mask):
-                            # All silence, fallback to return the original array
-                            return 0, len(audio)
-                        start = np.argmax(mask)
-                        end = len(audio) - np.argmax(mask[::-1])
-                        return start, end
-
-                    a, b = trim_silence(audio_numpy, threshold_db=-20)
+                    a, b = librosa.effects.trim(audio_numpy, top_db=30)[1]
                     a = int(a*0.9)
-                    b = len(audio_numpy)
+                    b = len(audio_numpy) #int(len(audio_numpy)-(len(audio_numpy)-b)*0.9)
                     print(f"Trimmed {len(audio_numpy)} samples to {b-a} samples")
                     audio_numpy = audio_numpy[a:b]
                     

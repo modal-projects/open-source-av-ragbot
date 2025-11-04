@@ -50,6 +50,7 @@ image = (
 SAMPLE_RATE = 16000
 MIN_AUDIO_SEGMENT_DURATION_SAMPLES = int(SAMPLE_RATE / 2)
 VAD_CHUNK_SIZE = 512
+UVICORN_PORT = 8000
 
 def chunk_audio(data: bytes, chunk_size: int):
     for i in range(0, len(data), chunk_size):
@@ -85,7 +86,7 @@ with image.imports():
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     region=SERVICES_REGION,
-    # min_containers=1,
+    min_containers=1,
     
 )
 @modal.concurrent(max_inputs=20)
@@ -322,46 +323,41 @@ class Transcriber:
             except Exception as e:
                 print("Exception:", e)
             finally:
-                if ws and ws.client_state is WebSocketState.CONNECTED:
+                if ws and ws.application_state is WebSocketState.CONNECTED:
                     await ws.close(code=1011) # internal error
                     ws = None
-                for task in tasks:
-                    if task.running():
-                        task.cancel()
+                for task in tasks:                    
+                    if not task.done():
                         try:
+                            task.cancel()
                             await task
                         except asyncio.CancelledError:
                             pass
 
 
         def start_server():
-            uvicorn.run(self.web_app, host="0.0.0.0", port=8000)
+            uvicorn.run(self.web_app, host="0.0.0.0", port=UVICORN_PORT)
 
         self.server_thread = threading.Thread(target=start_server, daemon=True)
         self.server_thread.start()
 
-        self.tunnel_ctx = modal.forward(8000)
-        self.tunnel = self.tunnel_ctx.__enter__()
-        print("forwarding get / 200 at url: ", self.tunnel.url)
-        self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
-        parakeet_dict.put("websocket_url", self.websocket_url)
-        print(f"Websocket URL: {self.websocket_url}")
-
-
     @modal.method()
     async def register_client(self, d: modal.Dict, client_id: str):
         try:
-            print(f"Registering client {client_id}")
-            d.put("url", self.websocket_url)
-            
-            while not d.contains("client_id"):
-                await asyncio.sleep(0.100)
+            with modal.forward(UVICORN_PORT) as tunnel:
+                print(f"Registering client {client_id}")
+                websocket_url = tunnel.url.replace("https://", "wss://") + "/ws"
+                print(f"Websocket URL: {websocket_url}")
+                d.put("url", websocket_url)
                 
-            while still_running := await d.get.aio("client_id"):
-                await asyncio.sleep(0.100)
+                while not d.contains("client_id"):
+                    await asyncio.sleep(0.100)
+                    
+                while still_running := await d.get.aio("client_id"):
+                    await asyncio.sleep(0.100)
 
         except Exception as e:
-            print(f"❌ Error registering client: {type(e)}: {e}")
+            print(f"Error registering client: {type(e)}: {e}")
         
 
     def transcribe(self, audio_data) -> str:

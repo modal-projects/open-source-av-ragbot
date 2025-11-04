@@ -1,3 +1,6 @@
+import time
+import asyncio
+
 import modal
 
 from server import SERVICES_REGION
@@ -16,11 +19,11 @@ vllm_image = (
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
         "VLLM_USE_V1": "1",
         "VERBOSE": "DEBUG",
-        # "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
-        "CUDA_CACHE_PATH": "/.cache/huggingface/.nv_cache",
-        "TORCHINDUCTOR_CACHE_DIR": "/.cache/huggingface/.inductor_cache",
-        "TRITON_CACHE_DIR": "/.cache/huggingface.triton_cache",
-        "VLLM_CACHE_ROOT": "/.cache/huggingface/.vllm_cache",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
+        "CUDA_CACHE_PATH": "/root/.cache/huggingface/.nv_cache",
+        "TORCHINDUCTOR_CACHE_DIR": "/root/.cache/huggingface/.inductor_cache",
+        "TRITON_CACHE_DIR": "/root/.cache/huggingface.triton_cache",
+        "VLLM_CACHE_ROOT": "/root/.cache/huggingface/.vllm_cache",
         })
 )
 
@@ -45,11 +48,11 @@ VLLM_PORT = 8000
     # scaledown_window=15 * MINUTES,  # how long should we stay up with no requests?
     # timeout=10 * MINUTES,  # how long should we wait for container start?
     volumes={
-        "/.cache/huggingface": hf_cache_vol,
-        "/.cache/vllm": vllm_cache_vol,
+        "/root/.cache/huggingface": hf_cache_vol,
+        "/root/.cache/vllm": vllm_cache_vol,
     },
     min_containers=1,
-    region="us-west-1",
+    region=SERVICES_REGION,
 )
 @modal.concurrent(  # how many requests can one replica handle? tune carefully!
     max_inputs=32
@@ -62,7 +65,6 @@ class VLLMServer():
         import threading
         import requests
         import asyncio
-        import time
 
         def start_server():
 
@@ -74,13 +76,15 @@ class VLLMServer():
                 "--served-model-name",
                 MODEL_NAME,
                 "llm",
-                "--host",
-                "0.0.0.0",
+                # "--host",
+                # "0.0.0.0",
                 "--port",
                 str(VLLM_PORT),
                 "--enable-chunked-prefill",
-                # "--max-num-seqs",
-                # "1",
+                "--max-num-seqs",
+                "1",
+                "--max-model-len",
+                "16384",
                 "--enable-prefix-caching",
                 
             ]
@@ -132,6 +136,24 @@ class VLLMServer():
         print(f"vLLM URL: {self.tunnel.url}")
 
     @modal.method()
-    def dummy(self):
-        return True
+    def ping(self):
+        return "pong"
+
+    @modal.method()
+    async def register_client(self, d: modal.Dict, client_id: str):
+        try:
+            with modal.forward(VLLM_PORT) as tunnel:
+                print(f"Registering client {client_id}")
+                websocket_url = tunnel.url.replace("https://", "wss://") + "/ws"
+                print(f"Websocket URL: {self.websocket_url}")
+                d.put("url", websocket_url)
+                
+                while not d.contains("client_id"):
+                    await asyncio.sleep(0.100)
+                    
+                while still_running := await d.get.aio("client_id"):
+                    await asyncio.sleep(0.100)
+
+        except Exception as e:
+            print(f"Error registering client: {type(e)}: {e}")
     

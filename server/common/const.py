@@ -1,5 +1,7 @@
+# BOT_REGION = None 
+# BOT_REGION = ["us-east-1", "us-ashburn-1", "us-east4"]
 BOT_REGION = ["us-west-1", "us-sanjose-1", "westus"]
-SERVICES_REGION = ["us-west-1", "us-sanjose-1", "westus"]
+SERVICES_REGION = BOT_REGION
 
 STT_GPU = ["L4", "L40S", "A100", "A100-80GB"]
 LLM_GPU = ["H100", "H200"]

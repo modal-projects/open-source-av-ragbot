@@ -65,7 +65,7 @@ _MOE_AND_DAL_FRAME_RATE = 12
 _MOE_AND_DAL_FRAME_WIDTH = 1024
 _MOE_AND_DAL_FRAME_HEIGHT = 576
 
-_DEFAULT_ENABLE_VIDEO = True
+_DEFAULT_ENABLE_VIDEO = False
 
 async def run_bot(
     webrtc_connection: SmallWebRTCConnection,
@@ -116,20 +116,6 @@ async def run_bot(
 
     vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
     llm_url = vllm_dict.get("vllm_url")
-
-    # Initialize OpenAI API compatibleLLM service
-    # llm = OpenAILLMService(
-    #     model="Qwen/Qwen3-4B-Instruct-2507",
-    #     api_key = "super-secret-key",
-    #     base_url = llm_url,
-    #     params=OpenAILLMService.InputParams(
-    #         extra={
-    #             "stream": True,
-    #         },
-    #     ),
-    # )
-
-    # json_parser = ModalRagStreamingJsonParser()
 
     llm = ModalVLLMService(
         model="Qwen/Qwen3-4B-Instruct-2507",
@@ -183,14 +169,14 @@ async def run_bot(
             cls_name="KokoroTTS",
             speaker="moe",
             voice="am_puck",
-            speed=1.35,
+            speed=1.3,
         )
         dal_tts = ModalKokoroTTSService(
             app_name="kokoro-tts",
             cls_name="KokoroTTS",
             speaker="dal",
-            voice="am_onyx",
-            speed=1.35,
+            voice="am_fenrir",
+            speed=1.5,
         )
         speaker_mixer = UnisonSpeakerMixer(speakers=["moe", "dal"])
         processors += [
@@ -205,6 +191,7 @@ async def run_bot(
         processors.append(ModalKokoroTTSService(
             app_name="kokoro-tts",
             cls_name="KokoroTTS",
+            voice="am_puck",
             speed=1.35,
         ))
 
