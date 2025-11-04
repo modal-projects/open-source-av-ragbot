@@ -10,7 +10,7 @@ A real-time conversational AI bot powered by [Pipecat](https://github.com/pipeca
 
 ```bash
 git clone <repository-url>
-cd pipecat-modal
+cd open-source-av-ragbot
 ```
 
 ### 2. Set Up Python Environment
