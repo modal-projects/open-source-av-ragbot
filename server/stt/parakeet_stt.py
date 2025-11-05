@@ -344,20 +344,20 @@ class Transcriber:
         self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
         print(f"Websocket URL: {self.websocket_url}")
 
-        @modal.method()
-        async def register_client(self, d: modal.Dict, client_id: str):
-            try:
-                print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
-                d.put("url", self.websocket_url)
+    @modal.method()
+    async def register_client(self, d: modal.Dict, client_id: str):
+        try:
+            print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
+            d.put("url", self.websocket_url)
+            
+            while not d.contains("client_id"):
+                await asyncio.sleep(0.100)
                 
-                while not d.contains("client_id"):
-                    await asyncio.sleep(0.100)
-                    
-                while still_running := await d.get.aio("client_id"):
-                    await asyncio.sleep(0.100)
+            while still_running := await d.get.aio("client_id"):
+                await asyncio.sleep(0.100)
 
-            except Exception as e:
-                print(f"Error registering client: {type(e)}: {e}")
+        except Exception as e:
+            print(f"Error registering client: {type(e)}: {e}")
 
     def transcribe(self, audio_data) -> str:
 
