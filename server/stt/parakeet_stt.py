@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sys
-from pathlib import Path
 import time
 import json
 import base64
@@ -39,12 +38,9 @@ image = (
         "numpy<2",
         "torchaudio",
         "soundfile",
+        "uvicorn[standard]",
     )
     .entrypoint([])  # silence chatty logs by container on start
-    .uv_pip_install(
-        "uvicorn[standard]",
-        "wat"
-    )
 )
 
 SAMPLE_RATE = 16000
@@ -77,6 +73,9 @@ with image.imports():
     from starlette.websockets import WebSocketState
     from urllib.request import urlopen
     import torch
+    import threading
+    import uvicorn
+    from fastapi import FastAPI
 
 
 @app.cls(
@@ -163,10 +162,6 @@ class Transcriber:
 
     @modal.enter(snap=False)
     def _start_server(self):
-
-        import threading
-        import uvicorn
-        from fastapi import FastAPI
 
         self.web_app = FastAPI()
 
@@ -363,7 +358,7 @@ class Transcriber:
 
             except Exception as e:
                 print(f"Error registering client: {type(e)}: {e}")
-                
+
     def transcribe(self, audio_data) -> str:
 
         with NoStdStreams():  # hide output, see https://github.com/NVIDIA/NeMo/discussions/3281#discussioncomment-2251217
@@ -374,8 +369,11 @@ class Transcriber:
 
     @modal.asgi_app()
     def webapp(self):
-        
         return self.web_app
+
+    @modal.method()
+    def ping(self):
+        return "pong"
 
     @modal.exit()
     def exit(self):
@@ -398,3 +396,16 @@ class NoStdStreams(object):
     def __exit__(self, exc_type, exc_value, traceback):
         sys.stdout, sys.stderr = self._stdout, self._stderr
         self.devnull.close()
+
+
+# warm up snapshots if needed
+if __name__ == "__main__":
+    parakeet_stt = modal.Cls.from_name("parakeet-transcription", "Transcriber").with_options(scaledown_window=2)
+    num_cold_starts = 20
+    for _ in range(num_cold_starts):
+        start_time = time.time()
+        parakeet_stt().ping.remote()
+        end_time = time.time()
+        print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
+        time.sleep(10.0) # allow container to drain
+    print(f"Parakeet STT cold starts: {num_cold_starts}")

@@ -1,21 +1,3 @@
-# Built from Pipecat's Modal Deployment example here:
-# https://github.com/pipecat-ai/pipecat/tree/main/examples/deployment/modal-example
-
-
-"""Moe and Dal RAG Bot Implementation.
-
-This module implements a chatbot using a custom RAG (Retrieval-Augmented Generation)
-system with VLLM backend. It includes:
-- Real-time audio/video interaction through WebRTC
-- Animated robot avatar with talking animations
-- Speech-to-speech pipeline with Parakeet STT and Chatterbox TTS
-- Structured RAG LLM service for enhanced responses
-- Voice activity detection and smart turn management
-
-The bot runs as part of a pipeline that processes audio/video frames and manages
-the conversation flow using the RAG system's streaming capabilities.
-"""
-
 import sys
 from loguru import logger
 
@@ -24,7 +6,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 
-from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
+from pipecat.processors.frameworks.rtvi import RTVIObserver, RTVIProcessor
 
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -44,11 +26,9 @@ from .services.modal_parakeet_service import ModalParakeetSegmentedSTTService
 from .services.modal_kokoro_service import ModalKokoroTTSService
 from .processors.unison_speaker_mixer import UnisonSpeakerMixer
 from .services.modal_vllm_service import ModalVLLMService
-from .processors.text_aggregator import ModalRagTextAggregator
 from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 
 from .avatar.animation import MoeDalBotAnimation, get_frames
-from .processors.parser import ModalRagStreamingJsonParser
 
 import modal
 
@@ -70,7 +50,7 @@ _DEFAULT_ENABLE_VIDEO = False
 async def run_bot(
     webrtc_connection: SmallWebRTCConnection,
     chroma_db: ChromaVectorDB,
-    enable_video: bool = _DEFAULT_ENABLE_VIDEO,
+    enable_moe_and_dal: bool = _DEFAULT_ENABLE_VIDEO,
 ):
     """Main bot execution function.
 
@@ -88,7 +68,7 @@ async def run_bot(
         audio_in_sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
         audio_out_enabled=True,
         audio_out_sample_rate=_AUDIO_OUTPUT_SAMPLE_RATE,
-        video_out_enabled=enable_video,
+        video_out_enabled=enable_moe_and_dal,
         video_out_width=_MOE_AND_DAL_FRAME_WIDTH,
         video_out_height=_MOE_AND_DAL_FRAME_HEIGHT,
         video_out_framerate=_MOE_AND_DAL_FRAME_RATE,
@@ -131,7 +111,7 @@ async def run_bot(
     messages = [
         {
             "role": "system", 
-            "content": get_system_prompt(),
+            "content": get_system_prompt(enable_moe_and_dal=enable_moe_and_dal),
         },
         {
             "role": "user",
@@ -161,7 +141,7 @@ async def run_bot(
     ]
     
     # only add animation processor and dual speaker setup if video is enabled
-    if enable_video:
+    if enable_moe_and_dal:
         ta = MoeDalBotAnimation()
         moe_tts = ModalKokoroTTSService(
             app_name="kokoro-tts",

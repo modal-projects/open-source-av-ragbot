@@ -1,11 +1,9 @@
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
-# from openai import DefaultAioHttpClient
 
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.utils.tracing.service_decorators import traced_llm
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.metrics.metrics import LLMTokenUsage
 
 from server.bot.processors.parser import ModalRagStreamingJsonParser
 import modal

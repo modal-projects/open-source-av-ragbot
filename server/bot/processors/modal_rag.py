@@ -1,13 +1,9 @@
 from pathlib import Path
+from loguru import logger
 
 import modal
 
-EMBEDDING_MODEL = "sentence-transformers/all-minilm-l6-v2"
-MODELS_DIR = Path("/models")
-
-import os
 import time
-from pydantic import BaseModel, Field
 from huggingface_hub import snapshot_download
 import chromadb
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -16,11 +12,12 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, TranscriptionFrame, EndFrame, CancelFrame
+from pipecat.frames.frames import Frame, TranscriptionFrame
 from llama_index.core import VectorStoreIndex
-from llama_index.core import load_index_from_storage
+
 
 this_dir = Path(__file__).parent
+EMBEDDING_MODEL = "sentence-transformers/all-minilm-l6-v2"
 
 class ChromaVectorDB:
 
@@ -34,94 +31,54 @@ class ChromaVectorDB:
         self.setup()
 
     def download_model(self):
-        from huggingface_hub import snapshot_download
-        print("Downloading model...")
         snapshot_download(repo_id=EMBEDDING_MODEL)
-        # print(f"Model downloaded to {MODELS_DIR / EMBEDDING_MODEL}")
     
-    # @modal.enter()
     def setup(self):
         """Setup the ChromaDB vector index."""
 
-        print("Setup ChromaDB...")
         if not self.is_setup:
 
             create_start = time.perf_counter()
-            # check of models are already downloaded
-            # if not (MODELS_DIR / EMBEDDING_MODEL).exists():
-            # print(f"Downloading model {EMBEDDING_MODEL}...")
-            # self.download_model()
 
-            # torch.set_float32_matmul_precision("high")
             # Load embedding model
             self.embedding = HuggingFaceEmbedding(
                EMBEDDING_MODEL, 
                device="cuda",
-                # backend="onnx",
                 model_kwargs={"torch_dtype": "float16"},
             )
             
             # Setup ChromaDB
-            # self.chroma_db_dir = f"/chroma/chroma_db_{EMBEDDING_MODEL}"
-            # if not os.path.exists(self.chroma_db_dir):
-            #     os.makedirs(self.chroma_db_dir)
             self.chroma_client = chromadb.EphemeralClient()
             self.chroma_collection = self.chroma_client.get_or_create_collection("modal_rag")
             self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
 
-            # print(f"Chroma collection: {self.chroma_collection.count()}")
-            # try:
-                
-            #     if self.chroma_collection.count() == 0:
             self.embed_docs()
-            #     else:
-            #         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)              
-            #         self._vector_index = load_index_from_storage(self.storage_context)
-            # except Exception as e:
-            #     print(f"Error loading vector index: {type(e)}: {e}")
-            #     self.chroma_client.delete_collection(name="modal_rag")
-            #     self.chroma_collection = self.chroma_client.get_or_create_collection(name="modal_rag")
-            #     self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-            #     self.embed_docs()
 
             # test retrieval
             test_nodes = self.query("What GPUs can I use with Modal?")
-            print(test_nodes)
 
             total_time = time.perf_counter() - create_start
-            print(f"🚀 Vector index created successfully in {total_time:.2f}s total!")
+            logger.info(f"🚀 ChromaDB Vector index initialized successfully in {total_time:.2f}s total!")
 
             self.is_setup = True
-            
-            
 
     def embed_docs(self):
         """Create the ChromaDB vector index from Modal docs if it doesn't exist."""
         
         
-        print("Embedding docs...")
+        logger.info("Embedding docs...")
 
         try:
 
             # Load Modal docs
-            # if not os.path.exists("/modal_docs/modal_docs_short.md"):
-            #     docs_vol = modal.Volume.from_name("modal_docs", create_if_missing=True)
-            #     with docs_vol.batch_upload() as batch:
-            #         batch.put_file(this_dir.parent / "assets" / "modal_docs_short.md", "/modal_docs_short.md")
-            #     docs_vol.commit()
-            #     docs_vol.reload()
             with open(this_dir.parent / "assets" / "modal_docs_short.md") as f:
                 document = Document(text=f.read())
-            print(f"Document: {document}")
-            print(f"Doc Id: {document.get_doc_id()}")
+
             node_parser = MarkdownNodeParser()
             nodes = node_parser.get_nodes_from_documents([document])
-            print(f"Created {len(nodes)} nodes")
-            print(nodes[0].text)
-            print(nodes[-1].text)
+            logger.info(f"Created {len(nodes)} nodes")
 
             # Create index from docs in chroma vector store
-            # self.docstore.add_documents(nodes)
             self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
             self._vector_index = VectorStoreIndex(
                 nodes, 
@@ -130,18 +87,15 @@ class ChromaVectorDB:
                 store_nodes_override=True,
             )
 
-            # self._vector_index.storage_context.persist(self.chroma_db_dir)
-
-            
         except Exception as e:
-            print(f"Error creating vector index: {type(e)}: {e}")
+            logger.info(f"Error creating vector index: {type(e)}: {e}")
             raise e
 
 
     def query(self, query: str, similarity_top_k: int = 3, num_adjacent_nodes: int = 2):
         """Query the ChromaDB vector index."""
 
-        print(f"Querying with query: {query}\n\tand similarity_top_k: {similarity_top_k}\n\tand num_adjacent_nodes: {num_adjacent_nodes}")
+        logger.info(f"Querying with query: {query}\n\tand similarity_top_k: {similarity_top_k}\n\tand num_adjacent_nodes: {num_adjacent_nodes}")
         nodes = self._vector_index.as_retriever(
             similarity_top_k=similarity_top_k
             ).retrieve(query)
@@ -153,21 +107,9 @@ class ChromaVectorDB:
                 mode="both",
             )
             nodes = prev_next_postprocessor.postprocess_nodes(nodes)
+
         return nodes
 
-    def save(self):
-        """Save the ChromaDB vector index."""
-        if self._vector_index:
-            self._vector_index.storage_context.persist(self.chroma_db_dir)
-            print(f"ChromaDB vector index saved to {self.chroma_db_dir}")
-        else:
-            print("No vector index to save")
-
-
-class ModalRagResponseStructure(BaseModel):
-    spoke_response: str = Field(description="A clean, conversational answer suitable for text-to-speech. Use natural language without technical symbols, code syntax, or complex formatting. Don't use terms like @modal.function, instead you can say 'the modal function decorator'. Explain concepts simply and avoid bullet points.")
-    code_blocks: list[str] = Field(description="List of actual code snippets that would be useful to display separately")
-    links: list[str] = Field(description="List of relevant URLs. These must be valid URLs pulled directly from the documentation context.")
 
 class ModalRag(FrameProcessor):
     def __init__(self, chroma_db: ChromaVectorDB, similarity_top_k: int = 5, num_adjacent_nodes: int = 2, **kwargs):
@@ -176,24 +118,6 @@ class ModalRag(FrameProcessor):
         
         self.similarity_top_k = similarity_top_k
         self.num_adjacent_nodes = num_adjacent_nodes
-
-
-    # async def stop(self, frame: EndFrame):
-    #     """Stop the  STT service.
-
-    #     Args:
-    #         frame: The end frame.
-    #     """
-    #     await super().stop(frame)
-
-    # async def cancel(self, frame: CancelFrame):
-    #     """Cancel the STT service.
-
-    #     Args:
-    #         frame: The cancel frame.
-    #     """
-    #     await super().cancel(frame)
-
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
 
@@ -212,15 +136,15 @@ class ModalRag(FrameProcessor):
                     if node.text is not None:
                         valid_texts.append(f"Related Modal Docs Section, Chunk {node_index+1}:\n{node.text}")
                     else:
-                        print("⚠️ Found node with None text, skipping")
+                        logger.info("⚠️ Found node with None text, skipping")
                 
                 context_str = "\n".join(valid_texts) if valid_texts else "No valid context found."
             except Exception as e:
-                print(f"⚠️  RAG retrieval failed: {type(e)}: {e}")
+                logger.info(f"⚠️  RAG retrieval failed: {type(e)}: {e}")
                 raise e
             
             rag_time = time.perf_counter() - rag_start
-            print(f"⏱️ RAG retrieval took {rag_time:.3f}s")
+            logger.info(f"⏱️ RAG retrieval took {rag_time:.3f}s")
             
             # Add RAG to most recent user message
             rag_context += f"\nRetrieved Chunks from Documentation:\n"
@@ -240,12 +164,19 @@ class ModalRag(FrameProcessor):
         await self.push_frame(frame, direction) 
 
 
-def get_system_prompt():
-    system_prompt = \
+def get_system_prompt(enable_moe_and_dal: bool = False):
+    """Get the system prompt for the Modal RAG."""
+    system_prompt = "You are a conversational AI that is an expert in the Modal library."
+
+    # add moe and dal instructions if enabled
+    if enable_moe_and_dal:
+        system_prompt += \
 """
-You are a conversational AI that is an expert in the Modal library.
 Your form is the Modal logo, a pair of characters named Moe and Dal. 
 Always refer to yourself as "Moe and Dal" and refer to yourself in the plural using words such as 'we' and 'us' and never 'I' or 'me'.
+"""
+
+    system_prompt += """
 Your job is to provide useful information about Modal and developing with Modal to the user.
 Potentially relevant sections of Modal's documentation will be provided to you as context in the user's most.
 
@@ -385,7 +316,7 @@ Running `modal --help` gives you a list of all available commands. All commands 
 
 - `modal run path/to/your/app.py` - Run your app on Modal.
 - `modal run -m module.path.to.app` - Run your app on Modal, using the Python module path.
-- `modal serve modal_server.py` - Run web endpoint(s) associated with a Modal app, and hot-reload code on changes. Will print a URL to the web endpoint(s). Note: you need to use `Ctrl+C` to interrupt `modal serve`.
+- `modal serve modal_server.py` - Run web endpoint(s) associated with a Modal app, and hot-reload code on changes. Will logger.info a URL to the web endpoint(s). Note: you need to use `Ctrl+C` to interrupt `modal serve`.
 
 ### Deploying your Modal app
 

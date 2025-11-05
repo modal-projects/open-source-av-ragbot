@@ -34,15 +34,9 @@ with image.imports():
     import librosa
     import threading
     import uvicorn
-    from huggingface_hub import hf_hub_download
-    import torch
 
-
-_DEFAULT_VOICE = 'am_puck'
-_UVICORN_PORT = 8000
-
-kokoro_tts_dict = modal.Dict.from_name("kokoro-tts-dict", create_if_missing=True)
-# vol = modal.Volume.from_name("kokoro-tts-vol", create_if_missing=True)
+DEFAULT_VOICE = 'am_puck'
+UVICORN_PORT = 8000
 
 @app.cls(
     image=image,
@@ -63,8 +57,6 @@ class KokoroTTS:
         self.tunnel_ctx = None
         self.tunnel = None
         self.websocket_url = None
-
-
         
         self.model = KModel().to("cuda").eval()
         self.pipeline = KPipeline(model=self.model, lang_code='a', device="cuda")
@@ -156,12 +148,12 @@ class KokoroTTS:
                 
 
         def start_server():
-            uvicorn.run(self.webapp, host="0.0.0.0", port=_UVICORN_PORT)
+            uvicorn.run(self.webapp, host="0.0.0.0", port=UVICORN_PORT)
 
         self.server_thread = threading.Thread(target=start_server, daemon=True)
         self.server_thread.start()
 
-        self.tunnel_ctx = modal.forward(_UVICORN_PORT)
+        self.tunnel_ctx = modal.forward(UVICORN_PORT)
         self.tunnel = self.tunnel_ctx.__enter__()
         self.websocket_url = self.tunnel.url.replace("https://", "wss://") + "/ws"
         print(f"Websocket URL: {self.websocket_url}")
@@ -189,11 +181,19 @@ class KokoroTTS:
     @modal.method()
     def ping(self):
         return "pong"
+
+    @modal.exit()
+    def exit(self):
+        if self.tunnel_ctx:
+            self.tunnel_ctx.__exit__()
+            self.tunnel_ctx = None
+            self.tunnel = None
+            self.websocket_url = None
             
     def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
 
         if voice is None:
-            voice = _DEFAULT_VOICE
+            voice = DEFAULT_VOICE
 
         try:
             stream_start = time.time()
@@ -223,8 +223,8 @@ class KokoroTTS:
                     audio_numpy = chunk.cpu().numpy()
 
                     a, b = librosa.effects.trim(audio_numpy, top_db=30)[1]
-                    a = int(a*0.9)
-                    b = len(audio_numpy) #int(len(audio_numpy)-(len(audio_numpy)-b)*0.9)
+                    a = int(a*0.9) # remove leading silence with 10% margin
+                    b = len(audio_numpy) # keep trailing silence
                     print(f"Trimmed {len(audio_numpy)} samples to {b-a} samples")
                     audio_numpy = audio_numpy[a:b]
                     
@@ -252,25 +252,13 @@ class KokoroTTS:
 
 
 def get_kokoro_server_url():
-
     try:
         return KokoroTTS().web_endpoint.get_web_url()
     except Exception as e:
         print(f"❌ Error getting Kokoro server URL: {e}")
         return None
 
-@app.local_entrypoint()
-def warmup_snapshots():
-    kokoro_tts = KokoroTTS().with_options(scaledown_window=2)
-    num_cold_starts = 20
-    for _ in range(num_cold_starts):
-        start_time = time.time()
-        kokoro_tts().ping.remote()
-        end_time = time.time()
-        print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
-        time.sleep(5.0) # allow container to drain
-    print(f"Kokoro TTS cold starts: {num_cold_starts}")
-
+# warm up snapshots if needed
 if __name__ == "__main__":
     kokoro_tts = modal.Cls.from_name("kokoro-tts", "KokoroTTS").with_options(scaledown_window=2)
     num_cold_starts = 20

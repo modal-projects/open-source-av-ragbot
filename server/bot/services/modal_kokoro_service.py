@@ -1,90 +1,35 @@
-
-
 import traceback
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 from loguru import logger
 import json
 import re
+import sys
 
-# from pyogg import OpusDecoder
 from pipecat.frames.frames import (
     ErrorFrame, 
     Frame, 
-    StartFrame, 
-    EndFrame, 
-    CancelFrame, 
     TTSAudioRawFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
     InterruptionFrame,
 )
-from pipecat.services.tts_service import TTSService
 from pipecat.processors.frame_processor import FrameDirection
 
-from websockets.asyncio.client import connect as websocket_connect
-from websockets.protocol import State
-
-from server.bot.services.modal_websocket_service import ModalWebsocketService
+from server.bot.services.modal_websocket_service import ModalWebsocketTTSService
 from server.bot.processors.unison_speaker_mixer import TTSSpeakerAudioRawFrame
 
-import modal
+try:
+    logger.remove(0)
+    logger.add(sys.stderr, level="DEBUG")
+except ValueError:
+    # Handle the case where logger is already initialized
+    pass
 
 _MODAL_PHONETIC_TEXT = "[Modal](/məʊdᵊl/)"
 _MOE_PHONETIC_TEXT = "[Moe](/məʊ/)"
 _DAL_PHONETIC_TEXT = "[Dal](/dæl/)" # alt: dæl
 
-class ModalTTSService(TTSService, ModalWebsocketService):
-    def __init__(
-        self, 
-        **kwargs
-    ):
-
-        TTSService.__init__(
-            self,
-            pause_frame_processing=True,
-            push_stop_frames=True,
-            push_text_frames=False,
-            stop_frame_timeout_s=1.0,
-            **kwargs
-        )
-        ModalWebsocketService.__init__(self, **kwargs)
-
-    def can_generate_metrics(self) -> bool:
-        """Indicate that this service can generate usage metrics."""
-        return True
-
-    async def start(self, frame: StartFrame):
-        """Start the STT service.
-
-        Initializes the service by constructing the WebSocket URL with all configured
-        parameters and establishing the connection to begin transcription processing.
-
-        Args:
-            frame: The start frame containing initialization parameters and metadata.
-        """
-        await super().start(frame)
-        await self._connect()
-
-    async def stop(self, frame: EndFrame):
-        """Stop the  STT service.
-
-        Args:
-            frame: The end frame.
-        """
-        await super().stop(frame)
-        await self._disconnect()
-
-    async def cancel(self, frame: CancelFrame):
-        """Cancel the STT service.
-
-        Args:
-            frame: The cancel frame.
-        """
-        await super().cancel(frame)
-        await self._disconnect()
-
-
-class ModalKokoroTTSService(ModalTTSService):
+class ModalKokoroTTSService(ModalWebsocketTTSService):
     def __init__(
         self, 
         speaker: str = None,
@@ -127,7 +72,7 @@ class ModalKokoroTTSService(ModalTTSService):
                     await self.push_frame(TTSSpeakerAudioRawFrame(message, self.sample_rate, 1, speaker=self._speaker))
                 else:
                     await self.push_frame(TTSAudioRawFrame(message, self.sample_rate, 1))
-                print(f"Received audio data of length {len(message)} bytes")
+                logger.info(f"Received audio data of length {len(message)} bytes")
             except Exception as e:
                 logger.error(f"Error decoding audio: {e}:{traceback.format_exc()}")
                 await self.push_error(ErrorFrame(f"Error decoding audio: {e}"))
@@ -162,7 +107,7 @@ class ModalKokoroTTSService(ModalTTSService):
                 "voice": self._voice,
                 "speed": self._speed,
             }
-            print(f"Sending prompt: {tts_msg}")
+            logger.info(f"Sending prompt: {tts_msg}")
             await self._websocket.send(json.dumps(tts_msg))
         except Exception as e:
             logger.error(f"Failed to send audio to KokoroTTS: {e}")

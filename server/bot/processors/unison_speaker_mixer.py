@@ -1,18 +1,4 @@
-#
-# Copyright (c) 2024–2025, Daily
-#
-# SPDX-License-Identifier: BSD 2-Clause License
-#
-
-"""Soundfile-based audio mixer for file playback integration.
-
-Provides an audio mixer that combines incoming audio with audio loaded from
-files using the soundfile library. Supports multiple audio formats and
-runtime configuration changes.
-"""
-
-import asyncio
-from typing import Any, Dict, Mapping
+from typing import Dict
 from dataclasses import dataclass
 
 import numpy as np
@@ -21,16 +7,6 @@ from loguru import logger
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.frames.frames import Frame, TTSAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection
-
-
-try:
-    import soundfile as sf
-except ModuleNotFoundError as e:
-    logger.error(f"Exception: {e}")
-    logger.error(
-        "In order to use the soundfile mixer, you need to `pip install pipecat-ai[soundfile]`."
-    )
-    raise Exception(f"Missing module: {e}")
 
 @dataclass
 class TTSSpeakerAudioRawFrame(TTSAudioRawFrame):
@@ -62,8 +38,7 @@ class UnisonSpeakerMixer(FrameProcessor):
         
         self._audio_buffers: Dict[str, list[bytes]] = {speaker: [] for speaker in speakers}
         self._volume = volume if volume is not None else 1.0 / len(speakers)
-        print(f"Volume: {self._volume}")
-        print(f"Speakers: {speakers}")
+        logger.debug(f"Initialized UnisonSpeakerMixer with speakers: {speakers}")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Process mixer control frames to update settings or enable/disable mixing.
@@ -71,16 +46,19 @@ class UnisonSpeakerMixer(FrameProcessor):
         Args:
             frame: The mixer control frame to process.
         """
+
         await super().process_frame(frame, direction)
+        
         if isinstance(frame, TTSSpeakerAudioRawFrame):
-            print(f"Received audio from {frame.speaker}")
             self._audio_buffers[frame.speaker].append(frame.audio)
+           
             # Determine the *maximum* buffer length (pad with silence if needed)
             if all([len(buffer) > 0 for buffer in self._audio_buffers.values()]):
+                
                 # Pad all buffers to max_len with silence (zeros)
                 audio_to_mix = [buffer.pop(0) for buffer in self._audio_buffers.values()]
                 max_len = max(len(audio) for audio in audio_to_mix)
-                print(f"Max length for mixing: {max_len}")
+                
                 padded_audio_to_mix = []
                 for audio in audio_to_mix:
                     if len(audio) < max_len:
@@ -91,9 +69,9 @@ class UnisonSpeakerMixer(FrameProcessor):
                     elif len(audio) == max_len:
                         padded_audio_to_mix.append(audio)
                     else:
-                        print(f"Warning: audio stream {audio} has length {len(audio)} but expected {max_len}")
-                mixed_audio = self._mix_streams(padded_audio_to_mix)
-                print(f"Mixed audio: {len(mixed_audio)} bytes")
+                        logger.info(f"Warning: audio stream {audio} has length {len(audio)} but expected {max_len}")
+                
+                mixed_audio = self._mix_streams(padded_audio_to_mix)                
                 await self.push_frame(TTSAudioRawFrame(mixed_audio, frame.sample_rate, frame.num_channels))
 
         else:
@@ -106,9 +84,7 @@ class UnisonSpeakerMixer(FrameProcessor):
             audio_streams: List of byte objects to mix. Each must be the same length and represent PCM16 mono audio.
             expected_length: Number of bytes each stream is expected to have.
         """
-        print(f"Mixing {len(audio_streams)} audio streams")
-
-
+        
         # Convert buffers to int16 arrays
         audio_streams_np = [np.frombuffer(audio, dtype=np.int16) for audio in audio_streams]
 
@@ -118,5 +94,4 @@ class UnisonSpeakerMixer(FrameProcessor):
         # Scale down to prevent clipping
         normalized = (summed * self._volume).clip(-32768, 32767).astype(np.int16)
         mixed_audio = normalized.tobytes()
-        print(f"Mixed audio: {len(mixed_audio)} bytes (frames: {len(mixed_audio)//2})")
         return mixed_audio
