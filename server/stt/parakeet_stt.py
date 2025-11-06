@@ -85,7 +85,9 @@ with image.imports():
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     region=SERVICES_REGION,
-    min_containers=1,
+    # no need to set min containers to 1, but see note in 
+    # README.md about warming up snapshots to reduce cold start time
+    # min_containers=1,
     
 )
 @modal.concurrent(max_inputs=20)
