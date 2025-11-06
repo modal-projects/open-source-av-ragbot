@@ -13,7 +13,7 @@
     "@pipecat-ai/client-js": "^1.4.1",
     "@pipecat-ai/client-react": "^1.1.0",
     "@pipecat-ai/daily-transport": "^1.4.1",
-    "@pipecat-ai/small-webrtc-transport": "^1.7.0",
+    "@pipecat-ai/small-webrtc-transport": "https://gitpkg.now.sh/modal-projects/pipecat-client-web-transports/transports/small-webrtc-transport?main",
     "@pipecat-ai/voice-ui-kit": "^0.4.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

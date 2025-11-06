@@ -8,12 +8,12 @@ from huggingface_hub import snapshot_download
 import chromadb
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core.postprocessor import PrevNextNodePostprocessor
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+# from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.embeddings.huggingface_openvino import OpenVINOEmbedding
 from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import Frame, TranscriptionFrame
-from llama_index.core import VectorStoreIndex
 
 
 this_dir = Path(__file__).parent
@@ -41,10 +41,11 @@ class ChromaVectorDB:
             create_start = time.perf_counter()
 
             # Load embedding model
-            self.embedding = HuggingFaceEmbedding(
-               EMBEDDING_MODEL, 
-               device="cuda",
-                model_kwargs={"torch_dtype": "float16"},
+            self.embedding = OpenVINOEmbedding(
+               model_id_or_path = EMBEDDING_MODEL, 
+               device="cpu",
+            #    backend="openvino",
+            #    model_kwargs={"file_name": "openvino_model_qint8_quantized.xml"},
             )
             
             # Setup ChromaDB
@@ -55,10 +56,10 @@ class ChromaVectorDB:
             self.embed_docs()
 
             # test retrieval
-            test_nodes = self.query("What GPUs can I use with Modal?")
+            for _ in range(5):
+                test_nodes = self.query("What GPUs can I use with Modal?")
 
-            total_time = time.perf_counter() - create_start
-            logger.info(f"🚀 ChromaDB Vector index initialized successfully in {total_time:.2f}s total!")
+            logger.info(f"🚀 ChromaDB Vector index initialized successfully in {time.perf_counter() - create_start:.2f}s total!")
 
             self.is_setup = True
 
@@ -118,6 +119,7 @@ class ModalRag(FrameProcessor):
         
         self.similarity_top_k = similarity_top_k
         self.num_adjacent_nodes = num_adjacent_nodes
+
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
 

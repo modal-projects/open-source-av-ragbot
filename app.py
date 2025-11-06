@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import time
 
 import modal
 
@@ -16,16 +17,16 @@ bot_image = (
     )
     .uv_pip_install(
         "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile]==0.0.92",
+        "chromadb",
+        "sentence-transformers[openvino]",
+        "llama-index==0.14.7",
+        "llama-index-embeddings-openvino",
+        "llama-index-vector-stores-chroma",
         "websocket-client",
         "aiofiles",
-        "llama-index",
-        "llama-index-embeddings-huggingface",
         "fastapi[standard]",
-        "llama-index-vector-stores-chroma",
-        "chromadb",
         "huggingface_hub[hf_transfer]",
     )
-    .pip_install("optimum[onnxruntime-gpu]", extra_options="-U --upgrade-strategy eager")
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
     })
@@ -45,17 +46,14 @@ with bot_image.imports():
 
 @app.cls(
     image=bot_image,
-    gpu=["a100","l40s", "l4"],
     timeout=30 * MINUTES,
-    min_containers=1,
     region=BOT_REGION,
-    cpu=8,
+    # cpu=8,
     # 16 GB
-    memory=16384, 
-    secrets=[modal.Secret.from_name("huggingface-secret")],
-    experimental_options={"enable_gpu_snapshot": True},
+    # memory=16384, 
     enable_memory_snapshot=True,
     max_inputs=1,
+    # min_containers=1,
 )
 class BotServer:
 
@@ -105,6 +103,10 @@ class BotServer:
         except Exception as e:
             raise RuntimeError(f"Failed to start bot pipeline: {e}")
 
+    @modal.method()
+    def ping(self):
+        return "pong"
+
 
 frontend_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -123,6 +125,7 @@ with frontend_image.imports():
 
 @app.function(image=frontend_image)
 @modal.asgi_app()
+@modal.concurrent(max_inputs=100)
 def serve_frontend():
     """Create and configure the FastAPI application.
 
@@ -162,3 +165,15 @@ def serve_frontend():
                 await asyncio.sleep(0.1)
 
     return web_app
+
+# warm up snapshots if needed
+if __name__ == "__main__":
+    bot_server = modal.Cls.from_name("moe-and-dal-ragbot", "BotServer").with_options(scaledown_window=2)
+    num_cold_starts = 20
+    for _ in range(num_cold_starts):
+        start_time = time.time()
+        bot_server().ping.remote()
+        end_time = time.time()
+        print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
+        time.sleep(10.0) # allow container to drain
+    print(f"BotServer cold starts: {num_cold_starts}")
