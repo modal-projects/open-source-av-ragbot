@@ -51,7 +51,8 @@ VLLM_PORT = 8000
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
     },
-    min_containers=1,
+    # NOTE: uncomment in this for testing, vllm has a long cold-start time
+    # min_containers=1,
     region=SERVICES_REGION,
 )
 @modal.concurrent(  # how many requests can one replica handle? tune carefully!
