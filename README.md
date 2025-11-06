@@ -37,15 +37,29 @@ modal setup
 
 ### 4. Set Up Client
 
+## Point the client at your deploy API URL
+
 ```bash
-cd client
+mv env.example .env
 
-# Install dependencies
-npm install
+# Set VITE_API_URL to your Modal server URL deployment
+# e.g. https://{YOUR_MODAL_ORG}--moe-and-dal-ragbot-bot-server.modal.run
+```
 
-# Configure environment
-cp env.example .env
-# Edit .env and set VITE_API_URL to your Modal deployment URL
+## Install dependencies
+
+```bash
+npm i
+```
+
+## Build or Run 
+
+```bash
+npm run build
+
+# or
+
+npm run dev
 ```
 
 ## Deployment
@@ -64,11 +78,17 @@ modal deploy -m server.stt.parakeet_stt
 # Deploy Kokoro TTS service
 modal deploy -m server.tts.kokoro_tts
 
-# Build frontend
-cd client
-npm run build
-cd ..
 
 # Deploy main bot application with frontend
 modal deploy -m app
+```
+
+### Warmup Snapshots
+We can speed up the cold start time of our bot (this is more important) and our Parakeet service using snapshots. However this leads to extra start up time for the first few containers when the apps are (re-)deployed. To warmup snapshots, you can run these files as Python scripts.
+
+```bash
+python -m server.stt.parakeet_stt
+
+python -m app
+```
 
