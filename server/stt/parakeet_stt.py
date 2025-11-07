@@ -350,10 +350,10 @@ class Transcriber:
             print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
             d.put("url", self.websocket_url)
             
-            while not d.contains("client_id"):
+            while not d.contains(client_id):
                 await asyncio.sleep(0.100)
                 
-            while still_running := await d.get.aio("client_id"):
+            while still_running := await d.get.aio(client_id):
                 await asyncio.sleep(0.100)
 
         except Exception as e:
