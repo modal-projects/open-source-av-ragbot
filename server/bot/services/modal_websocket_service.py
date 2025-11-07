@@ -81,7 +81,18 @@ class ModalWebsocketService(WebsocketService):
             self._receive_task = self.create_task(self._receive_task_handler(self._report_error))
 
         logger.info(f"Connected to: {self._websocket_url}")
+
+    def __del__(self):
+        self._cleanup()
     
+    def _cleanup(self):
+        # Reset state only after everything is cleaned up
+        self._websocket = None
+        if self.call_id:
+            self.call_id.cancel()
+            self.call_id = None
+        modal.Dict.objects.delete(f"{self.modal_client_id}-websocket-client-registry")
+
     async def _disconnect(self):
         """Disconnect from WebSocket and clean up tasks."""
         try:
@@ -101,12 +112,7 @@ class ModalWebsocketService(WebsocketService):
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
         finally:
-            # Reset state only after everything is cleaned up
-            self._websocket = None
-            if self.call_id:
-                self.call_id.cancel()
-                self.call_id = None
-            modal.Dict.objects.delete(f"{self.modal_client_id}-websocket-client-registry")
+            self._cleanup()
 
     async def _connect_websocket(self):
         """Establish WebSocket connection to API."""

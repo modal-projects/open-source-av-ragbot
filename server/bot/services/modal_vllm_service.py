@@ -6,6 +6,7 @@ import time
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
 
+from pipecat.frames.frames import StopFrame, CancelFrame
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.utils.tracing.service_decorators import traced_llm
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -35,7 +36,7 @@ class ModalVLLMService(OpenAILLMService):
         self._cls_name = cls_name
         self.call_id = None
         self.modal_client_id = str(uuid.uuid4())
-        self.registry_dict = modal.Dict.from_name(f"{self.modal_client_id}-websocket-client-registry", create_if_missing=True)
+        self.registry_dict = modal.Dict.from_name(f"{self.modal_client_id}-client-registry", create_if_missing=True)
         self.registry_dict.put(self.modal_client_id, True)
         if self._app_name and self._cls_name:
             logger.info(f"Spawning service for {self._app_name}.{self._cls_name} with client id {self.modal_client_id}")
@@ -65,6 +66,23 @@ class ModalVLLMService(OpenAILLMService):
         if base_url is None:
             raise Exception("Failed to get base URL")
         return base_url
+
+    async def stop(self, frame: StopFrame):
+        await super().stop(frame)
+        self._cleanup()
+
+    async def cancel(self, frame: CancelFrame):
+        await super().cancel(frame)
+        self._cleanup()
+
+    def _cleanup(self):
+        if self.call_id:
+            self.call_id.cancel()
+            self.call_id = None
+        modal.Dict.objects.delete(f"{self.modal_client_id}-client-registry")
+
+    def __del__(self):
+        self._cleanup()
 
     # async def start(self, frame: StartFrame):
     #     await super().start(frame)

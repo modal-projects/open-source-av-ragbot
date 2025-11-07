@@ -402,7 +402,7 @@ class NoStdStreams(object):
 # warm up snapshots if needed
 if __name__ == "__main__":
     parakeet_stt = modal.Cls.from_name("parakeet-transcription", "Transcriber")
-    num_cold_starts = 20
+    num_cold_starts = 5
     for _ in range(num_cold_starts):
         start_time = time.time()
         parakeet_stt().ping.remote()

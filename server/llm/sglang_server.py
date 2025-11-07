@@ -367,6 +367,4 @@ if __name__ == "__main__":
         make_request(sglang_server)
         time.sleep(30.0) # allow container to drain
     print(f"SGLang cold starts: {num_cold_starts}")
-    # sglang_server = modal.Cls.from_name("sglang-server", "SGLangServer").with_concurrency(max_inputs=None)
-    # make_request(sglang_server)
-    # print("Reset max inputs to None")
+
