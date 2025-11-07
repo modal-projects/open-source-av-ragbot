@@ -27,39 +27,29 @@ source .venv/bin/activate
 
 ### 3. Configure Modal
 
-```bash
-# Install Modal CLI
-pip install modal
+Go to [modal.com](modal.com) and make an account if you don't have one.
 
-# Authenticate with Modal
+```bash
+# Authenticate your Modal installation
 modal setup
 ```
 
 ### 4. Set Up Client
 
-## Point the client at your deploy API URL
-
-```bash
-mv env.example .env
-
-# Set VITE_API_URL to your Modal server URL deployment
-# e.g. https://{YOUR_MODAL_ORG}--moe-and-dal-ragbot-bot-server.modal.run
-```
-
 ## Install dependencies
 
 ```bash
+cd client
 npm i
 ```
 
-## Build or Run 
+## Build
 
 ```bash
 npm run build
 
-# or
-
-npm run dev
+# return to root dir
+cd ..
 ```
 
 ## Deployment
@@ -69,8 +59,16 @@ npm run dev
 The project consists of multiple Modal services that need to be deployed:
 
 ```bash
-# Deploy VLLM inference server
+# From the root dir of the project
+
+# Deploy an LLM Service
+
+# etiher VLLM inference server for optimized TTFT
 modal deploy -m server.llm.vllm_server
+
+# or use SGLang server for 
+# aster cold starts with GPU snapshots
+modal deploy -m server.llm.sglang_server
 
 # Deploy Parakeet STT service
 modal deploy -m server.stt.parakeet_stt
@@ -78,16 +76,17 @@ modal deploy -m server.stt.parakeet_stt
 # Deploy Kokoro TTS service
 modal deploy -m server.tts.kokoro_tts
 
-
 # Deploy main bot application with frontend
 modal deploy -m app
 ```
 
 ### Warmup Snapshots
-We can speed up the cold start time of our bot (this is more important) and our Parakeet service using snapshots. However this leads to extra start up time for the first few containers when the apps are (re-)deployed. To warmup snapshots, you can run these files as Python scripts.
+We can speed up the cold start time of our bot (this is more important) and our Parakeet and LLM service (if using SGLang) using snapshots. However this leads to extra start up time for the first few containers when the apps are (re-)deployed. To warmup snapshots, you can run these files as Python scripts.
 
 ```bash
 python -m server.stt.parakeet_stt
+
+python -m server.llm.sglang_server
 
 python -m app
 ```
