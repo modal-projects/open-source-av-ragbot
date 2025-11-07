@@ -9,7 +9,7 @@ A real-time conversational AI bot powered by [Pipecat](https://github.com/pipeca
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone git@github.com:modal-projects/open-source-av-ragbot.git
 cd open-source-av-ragbot
 ```
 
