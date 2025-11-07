@@ -94,13 +94,15 @@ async def run_bot(
 
     modal_rag = ModalRag(chroma_db=chroma_db, similarity_top_k=3, num_adjacent_nodes=2)
 
-    vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
-    llm_url = vllm_dict.get("vllm_url")
+    # vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
+    # llm_url = vllm_dict.get("vllm_url")
 
     llm = ModalVLLMService(
         model="Qwen/Qwen3-4B-Instruct-2507",
         api_key = "super-secret-key",
-        base_url = llm_url,
+        # base_url = llm_url,
+        app_name="sglang-server",
+        cls_name="SGLangServer",
         params=OpenAILLMService.InputParams(
             extra={
                 "stream": True,
