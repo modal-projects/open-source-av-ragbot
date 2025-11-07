@@ -85,6 +85,7 @@ with image.imports():
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     region=SERVICES_REGION,
+    # uncomment min containers for testing
     # min_containers=1,
     scaledown_window=10,
 )

@@ -223,7 +223,7 @@ class VLLMServer():
     
 # warm up snapshots if needed
 if __name__ == "__main__":
-    vllm_server = modal.Cls.from_name("vllm-service", "VLLMServer").with_options(scaledown_window=2)
+    vllm_server = modal.Cls.from_name("vllm-service", "VLLMServer")
     num_cold_starts = 5
     for _ in range(num_cold_starts):
         start_time = time.time()

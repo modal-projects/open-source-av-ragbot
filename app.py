@@ -168,12 +168,12 @@ def serve_frontend():
 
 # warm up snapshots if needed
 if __name__ == "__main__":
-    bot_server = modal.Cls.from_name("moe-and-dal-ragbot", "BotServer").with_options(scaledown_window=2)
+    bot_server = modal.Cls.from_name("moe-and-dal-ragbot", "BotServer")
     num_cold_starts = 20
     for _ in range(num_cold_starts):
         start_time = time.time()
         bot_server().ping.remote()
         end_time = time.time()
         print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
-        time.sleep(10.0) # allow container to drain
+        time.sleep(30.0) # allow container to drain
     print(f"BotServer cold starts: {num_cold_starts}")
