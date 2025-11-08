@@ -53,15 +53,15 @@ class ModalOpenAILLMService(OpenAILLMService):
 
     async def stop(self, frame: StopFrame):
         await super().stop(frame)
-        await self._cleanup()
+        self._cleanup()
 
     async def cancel(self, frame: CancelFrame):
         await super().cancel(frame)
-        await self._cleanup()
+        self._cleanup()
 
-    async def _cleanup(self):
+    def _cleanup(self):
         if self.modal_tunnel_manager:
-            await self.modal_tunnel_manager.close()
+            self.modal_tunnel_manager.close()
 
     @traced_llm
     async def _process_context(self, context: OpenAILLMContext):
