@@ -7,7 +7,7 @@ import base64
 
 import modal
 
-from server import SERVICES_REGION
+from server import SERVICE_REGIONS
 
 app = modal.App("parakeet-transcription")
 
@@ -84,7 +84,7 @@ with image.imports():
     image=image,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
-    region=SERVICES_REGION,
+    region=SERVICE_REGIONS,
     # uncomment min containers for testing
     # min_containers=1,
     scaledown_window=10,
@@ -114,8 +114,6 @@ class Transcriber:
         if self.model.cfg.decoding.strategy != "beam":
             self.model.cfg.decoding.strategy = "greedy_batch"
             self.model.change_decoding_strategy(self.model.cfg.decoding)
-
-        # torchaudio.set_audio_backend("soundfile")
 
         self.silero_vad, utils = torch.hub.load(
             repo_or_dir='snakers4/silero-vad',
@@ -191,7 +189,7 @@ class Transcriber:
                         json_data = json.loads(msg)
                         if "type" in json_data:
                             if json_data["type"] == "start_client_session":
-                                self.register_client.spawn(modal.Dict())
+                                self.run_tunnel_client.spawn(modal.Dict())
                             if json_data["type"] == "set_vad":
                                 self.use_vad = json_data["vad"]
                                 continue
@@ -223,9 +221,7 @@ class Transcriber:
                     audio_data = _bytes_to_torch(audio_data)
 
                     if not vad:
-                        start_time = time.perf_counter()
-                        
-                        # audio_segment = all_audio_data[start_idx:end_idx]
+                        start_time = time.perf_counter()                        
                         transcript = self.transcribe(audio_data)
                         await transcription_queue.put(transcript)
 
@@ -346,19 +342,16 @@ class Transcriber:
         print(f"Websocket URL: {self.websocket_url}")
 
     @modal.method()
-    async def register_client(self, d: modal.Dict, client_id: str):
+    async def run_tunnel_client(self, d: modal.Dict):
         try:
-            print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
-            d.put("url", self.websocket_url)
+            print(f"Sending websocket url: {self.websocket_url}")
+            await d.put.aio("url", self.websocket_url)
             
-            while not d.contains(client_id):
-                await asyncio.sleep(0.100)
-                
-            while still_running := await d.get.aio(client_id):
-                await asyncio.sleep(0.100)
+            while True:
+                await asyncio.sleep(1.0)
 
         except Exception as e:
-            print(f"Error registering client: {type(e)}: {e}")
+            print(f"Error running tunnel client: {type(e)}: {e}")
 
     def transcribe(self, audio_data) -> str:
 

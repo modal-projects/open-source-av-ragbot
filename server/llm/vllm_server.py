@@ -4,7 +4,7 @@ import uuid
 import modal
 from torch import miopen_batch_norm
 
-from server import SERVICES_REGION
+from server import SERVICE_REGIONS
 
 vllm_image = (
     modal.Image.from_registry("nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04", add_python="3.12")
@@ -57,7 +57,7 @@ with vllm_image.imports():
     #     "/root/.cache/vllm": vllm_cache_vol,
     # },
     # min_containers=1,
-    region=SERVICES_REGION,
+    region=SERVICE_REGIONS,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )
@@ -205,21 +205,16 @@ class VLLMServer():
             self.vllm_url = None
 
     @modal.method()
-    async def register_client(self, d: modal.Dict, client_id: str):
+    async def run_tunnel_client(self, d: modal.Dict):
         try:
-            with modal.forward(VLLM_PORT) as tunnel:
-                print(f"Registering client {client_id}")
-                print(f"Tunnel URL: {tunnel.url}")
-                d.put("url", tunnel.url)
-                
-                while not d.contains(client_id):
-                    await asyncio.sleep(0.100)
-                    
-                while still_running := await d.get.aio(client_id):
-                    await asyncio.sleep(0.100)
+            print(f"Sending websocket url: {self.websocket_url}")
+            await d.put.aio("url", self.websocket_url)
+            
+            while True:
+                asyncio.sleep(1.0)
 
         except Exception as e:
-            print(f"Error registering client: {type(e)}: {e}")
+            print(f"Error running tunnel client: {type(e)}: {e}")
     
 # warm up snapshots if needed
 if __name__ == "__main__":
@@ -230,7 +225,7 @@ if __name__ == "__main__":
         with modal.Dict.ephemeral() as d:
             client_id = str(uuid.uuid4())
             d.put(client_id, True)
-            call_id = vllm_server().register_client.spawn(d, client_id)
+            call_id = vllm_server().run_tunnel_client.spawn(d, client_id)
             while not d.contains("url"):
                 time.sleep(0.100)
             vllm_url = d.get("url")
@@ -244,7 +239,7 @@ if __name__ == "__main__":
                 }
             )
             print(response.json())
-            d.put(client_id, False)
+            call_id.cancel()
             end_time = time.time()
             print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
             time.sleep(10.0) # allow container to drain

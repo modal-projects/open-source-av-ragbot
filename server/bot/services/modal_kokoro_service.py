@@ -15,7 +15,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
-from server.bot.services.modal_websocket_service import ModalWebsocketTTSService
+from server.bot.services.modal_services import ModalWebsocketTTSService
 from server.bot.processors.unison_speaker_mixer import TTSSpeakerAudioRawFrame
 
 try:

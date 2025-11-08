@@ -11,9 +11,11 @@ import asyncio
 
 import requests
 
+from server import SERVICE_REGIONS
+
 APP_NAME: Final[str] = "sglang-server"
 MODEL_NAME: Final[str] = "Qwen/Qwen3-4B-Instruct-2507"
-
+SGLANG_PORT: Final[int] = 8092
 
 HF_CACHE_VOL: Final[modal.Volume] = modal.Volume.from_name(
     "huggingface-cache", create_if_missing=True
@@ -82,6 +84,8 @@ app: Final[modal.App] = modal.App(APP_NAME)
         "enable_gpu_snapshot": True,
     },
     scaledown_window=10,
+    # min_containers=1,
+    region=SERVICE_REGIONS,
 )
 class SGLangServer:
     @modal.enter(snap=True)
@@ -102,7 +106,7 @@ class SGLangServer:
             "--host",
             "0.0.0.0",
             "--port",
-            "8092",
+            str(SGLANG_PORT),
             "--log-level",
             "info",
             "--cuda-graph-max-bs",
@@ -117,7 +121,7 @@ class SGLangServer:
 
         subprocess.Popen(cmd)
 
-        url: str = "http://127.0.0.1:8092/v1/models"
+        url: str = f"http://127.0.0.1:{SGLANG_PORT}/v1/models"
         deadline: float = time.time() + 10 * 60
         offloaded = False
         while time.time() < deadline:
@@ -129,7 +133,7 @@ class SGLangServer:
                             print("Server is healthy 🚀 –", url)
                             self._warmup()
                             print("Offloading...")
-                            url = "http://127.0.0.1:8092/release_memory_occupation"
+                            url = f"http://127.0.0.1:{SGLANG_PORT}/release_memory_occupation"
                             headers = {"Content-Type": "application/json"}
                             if not offloaded:
                                 response = requests.post(url, headers=headers, json={})
@@ -161,7 +165,7 @@ class SGLangServer:
     @modal.enter(snap=False)
     async def restore(self):
         print("moving back to gpu...")
-        url = "http://127.0.0.1:8092/resume_memory_occupation"
+        url = f"http://127.0.0.1:{SGLANG_PORT}/resume_memory_occupation"
         headers = {"Content-Type": "application/json"}
         response = requests.post(url, headers=headers, json={})
         print("Finished moving back to gpu")
@@ -169,7 +173,7 @@ class SGLangServer:
         memory_usage = get_gpu_memory_usage()
         print(f"Current GPU memory usage post-resume: {memory_usage:.2f}GB")
 
-        self.tunnel_ctx = modal.forward(8092)
+        self.tunnel_ctx = modal.forward(SGLANG_PORT)
         self.tunnel = await self.tunnel_ctx.__aenter__()
         print(f"SGLANG URL: {self.tunnel.url}")
 
@@ -183,7 +187,7 @@ class SGLangServer:
 
         print("🚀 Warming up server...")
 
-        client = OpenAI(base_url="http://127.0.0.1:8092/v1", api_key="123")
+        client = OpenAI(base_url=f"http://127.0.0.1:{SGLANG_PORT}/v1", api_key="123")
         system_text = "You are a helpful assistant."
         user_prompt = "Write me an essay about the benefits of using Modal."
         messages = [
@@ -215,125 +219,24 @@ class SGLangServer:
         print("✅ Server is warmed up!")
 
     @modal.method()
-    async def register_client(self, d: modal.Dict, client_id: str):
+    async def run_tunnel_client(self, d: modal.Dict):
         try:
-            print(f"Registering client {client_id}")
-            print(f"Tunnel URL: {self.tunnel.url}")
-            d.put("url", self.tunnel.url)
+            print(f"Sending url: {self.tunnel.url}")
+            await d.put.aio("url", self.tunnel.url)
             
-            while not d.contains(client_id):
-                await asyncio.sleep(0.100)
-                
-            while still_running := await d.get.aio(client_id):
-                await asyncio.sleep(0.100)
+            while True:
+                await asyncio.sleep(1.0)
 
         except Exception as e:
-            print(f"Error registering client: {type(e)}: {e}")
+            print(f"Error running tunnel client: {type(e)}: {e}")
 
-    # @modal.web_server(port=8092, startup_timeout=5 * 60)
-    # def serve(self) -> None:  # pragma: no cover
-    #     """Web server endpoint (actual server started in _startup)."""
-    #     return
-
-    @modal.method()
-    def get_response(
-        self,
-        prompt: str,
-    ) -> str:
-        import os
-        import time
-
-        import httpx
-        from openai import APIConnectionError, OpenAI
-
-        base_url: str | None = os.environ.get("MODAL_SGL_URL")
-        api_key: str = "123"
-
-        client = OpenAI(base_url=base_url, api_key=api_key)
-
-        system_text = "You are a helpful assistant."
-        messages = [
-            {
-                "role": "system",
-                "content": system_text,
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt,
-                    },
-                ],
-            },
-        ]
-
-        max_attempts = 3
-        base_backoff_s = 2.0
-        t0 = time.perf_counter()
-        for attempt in range(1, max_attempts + 1):
-            try:
-                result = client.chat.completions.create(
-                    model=MODEL_PATH,
-                    messages=messages,
-                    temperature=0,
-                    max_tokens=4096,
-                    top_p=0.95,
-                )
-                break
-            except (APIConnectionError, httpx.HTTPError) as exc:
-                if attempt == max_attempts:
-                    raise RuntimeError(
-                        "OpenAI chat completion request failed after retries"
-                    ) from exc
-                sleep_for = max(base_backoff_s * (2 ** (attempt - 1)), 2)
-                print(
-                    f"retry {attempt}/{max_attempts} after {sleep_for:.1f}s due to {exc.__class__.__name__}: {exc}"
-                )
-                time.sleep(sleep_for)
-        t1 = time.perf_counter()
-        print(f"SGLang completion took {(t1 - t0)} seconds after {attempt} attempts")
-        content = ""
-        if hasattr(result, "choices"):
-            choice = result.choices[0]
-            message = getattr(choice, "message", None)
-            if message is not None and hasattr(message, "content"):
-                content = message.content or ""
-        if isinstance(result, dict):
-            content = (
-                result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            )
-        print(content)
-        return content
+    @modal.web_server(port=SGLANG_PORT, startup_timeout=5 * 60)
+    def serve(self) -> None:  # pragma: no cover
+        """Web server endpoint (actual server started in _startup)."""
+        return
 
 if __name__ == "__main__":
-    # from argparse import ArgumentParser
-    # parser = ArgumentParser()
-    # group = parser.add_mutually_exclusive_group(required=True)
-    # group.add_argument("--single-prompt", help="Try out a single prompt", type=str)
-    # group.add_argument("--prompts-file", help="File containing one prompt per line", type=str)
-    # args = parser.parse_args()
 
-    # SGLangServer = modal.Cls.from_name(APP_NAME, "SGLangServer")
-    # server = SGLangServer()
-
-    # if args.single_prompt:
-    #     response = server.get_response.remote(args.single_prompt)
-    #     sys.exit(0)
-
-    # with open(args.prompts_file) as f:
-    #     prompts = f.readlines()
-
-    # # Non-modal-map approach
-    # threadpoolexecutor = ThreadPoolExecutor(max_workers=10)
-    # futures = []
-    # for _i, prompt in enumerate(prompts):
-    #     futures.append(threadpoolexecutor.submit(server.get_response.remote, prompt))
-    
-    # finished = 0
-    # for future in tqdm(as_completed(futures), total=len(prompts), desc="Processing prompts"):
-    #     finished += 1
-    #     print(f"[{finished}/{len(prompts)}]")
     import time
     import uuid
 
@@ -343,7 +246,7 @@ if __name__ == "__main__":
         with modal.Dict.ephemeral() as d:
             client_id = str(uuid.uuid4())
             d.put(client_id, True)
-            call_id = server_cls().register_client.spawn(d, client_id)
+            call_id = server_cls().run_tunnel_client.spawn(d, client_id)
             while not d.contains("url"):
                 time.sleep(0.100)
             sglang_url = d.get("url")
@@ -357,7 +260,7 @@ if __name__ == "__main__":
                 }
             )
             print(response.json())
-            d.put(client_id, False)
+            call_id.cancel()
             end_time = time.time()
             print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
 
