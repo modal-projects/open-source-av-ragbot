@@ -103,7 +103,7 @@ echo -e "${BLUE}Starting deployment process...${NC}"
 deployed_count=0
 
 if [[ "$DEPLOY_LLM" == "true" ]]; then
-    deploy_service "LLM Service" "server.llm.vllm_server"
+    deploy_service "LLM Service" "server.llm.sglang_server"
     ((deployed_count++))
 fi
 

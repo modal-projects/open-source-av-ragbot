@@ -14,7 +14,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.utils.time import time_now_iso8601
 
-from .modal_websocket_service import ModalWebsocketSegmentedSTTService
+from .modal_services import ModalWebsocketSegmentedSTTService
 
 try:
     logger.remove(0)

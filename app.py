@@ -4,7 +4,7 @@ import time
 
 import modal
 
-from server import BOT_REGION
+from server import SERVICE_REGIONS
 
 app = modal.App("moe-and-dal-ragbot")
 
@@ -47,13 +47,10 @@ with bot_image.imports():
 @app.cls(
     image=bot_image,
     timeout=30 * MINUTES,
-    region=BOT_REGION,
-    # cpu=8,
-    # 16 GB
-    # memory=16384, 
+    region=SERVICE_REGIONS,
     enable_memory_snapshot=True,
     max_inputs=1,
-    # min_containers=1,
+    min_containers=1,
 )
 class BotServer:
 
@@ -93,7 +90,13 @@ class BotServer:
                 logger.info("WebRTC connection to bot closed.")
 
             print("Starting bot process.")
-            bot_task = asyncio.create_task(run_bot(webrtc_connection, self.chroma_db, enable_moe_and_dal=False))
+            bot_task = asyncio.create_task(
+                run_bot(
+                    webrtc_connection, 
+                    self.chroma_db, 
+                    enable_moe_and_dal=False
+                )
+            )
 
             answer = webrtc_connection.get_answer()
             await d.put.aio("answer", answer)

@@ -22,10 +22,11 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_response import LLMUserAggregatorParams
 from pipecat.frames.frames import LLMRunFrame
 
+from .services.modal_services import ModalTunnelManager
 from .services.modal_parakeet_service import ModalParakeetSegmentedSTTService
 from .services.modal_kokoro_service import ModalKokoroTTSService
 from .processors.unison_speaker_mixer import UnisonSpeakerMixer
-from .services.modal_vllm_service import ModalVLLMService
+from .services.modal_openai_service import ModalOpenAILLMService
 from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 
 from .avatar.animation import MoeDalBotAnimation, get_frames
@@ -87,22 +88,24 @@ async def run_bot(
     )
 
     stt = ModalParakeetSegmentedSTTService(
-        app_name="parakeet-transcription",
-        cls_name="Transcriber",
-        audio_passthrough=True,
+        modal_tunnel_manager=ModalTunnelManager(
+            app_name="parakeet-transcription",
+            cls_name="Transcriber",
+        ),
     )
 
     modal_rag = ModalRag(chroma_db=chroma_db, similarity_top_k=3, num_adjacent_nodes=2)
 
-    # vllm_dict = modal.Dict.from_name("vllm-dict", create_if_missing=True)
-    # llm_url = vllm_dict.get("vllm_url")
-
-    llm = ModalVLLMService(
-        model="Qwen/Qwen3-4B-Instruct-2507",
-        api_key = "super-secret-key",
-        # base_url = llm_url,
+    modal_sglang_tunnel_manager = ModalTunnelManager(
         app_name="sglang-server",
         cls_name="SGLangServer",
+    )
+    base_url = await modal_sglang_tunnel_manager.get_url()
+
+    llm = ModalOpenAILLMService(
+        model="Qwen/Qwen3-4B-Instruct-2507",
+        modal_tunnel_manager=modal_sglang_tunnel_manager,
+        base_url=base_url,
         params=OpenAILLMService.InputParams(
             extra={
                 "stream": True,
@@ -146,15 +149,19 @@ async def run_bot(
     if enable_moe_and_dal:
         ta = MoeDalBotAnimation()
         moe_tts = ModalKokoroTTSService(
-            app_name="kokoro-tts",
-            cls_name="KokoroTTS",
+            modal_tunnel_manager=ModalTunnelManager(
+                app_name="kokoro-tts",
+                cls_name="KokoroTTS",
+            ),
             speaker="moe",
             voice="am_puck",
             speed=1.3,
         )
         dal_tts = ModalKokoroTTSService(
-            app_name="kokoro-tts",
-            cls_name="KokoroTTS",
+            modal_tunnel_manager=ModalTunnelManager(
+                app_name="kokoro-tts",
+                cls_name="KokoroTTS",
+            ),
             speaker="dal",
             voice="am_fenrir",
             speed=1.5,
@@ -170,8 +177,10 @@ async def run_bot(
         ]
     else:
         processors.append(ModalKokoroTTSService(
-            app_name="kokoro-tts",
-            cls_name="KokoroTTS",
+            modal_tunnel_manager=ModalTunnelManager(
+                app_name="kokoro-tts",
+                cls_name="KokoroTTS",
+            ),
             voice="am_puck",
             speed=1.35,
         ))

@@ -4,7 +4,7 @@ import json
 
 import modal
 
-from server import SERVICES_REGION
+from server import SERVICE_REGIONS
 
 def chunk_audio(audio, desired_frame_size):
     for i in range(0, len(audio), desired_frame_size):
@@ -43,8 +43,8 @@ UVICORN_PORT = 8000
     # volumes={"/cache": vol},
     gpu=["A100", "L40S"],
     # NOTE, uncomment min_containers = 1 for testing and avoiding cold start times
-    # min_containers=1, 
-    region=SERVICES_REGION,
+    min_containers=1, 
+    region=SERVICE_REGIONS,
     timeout= 60 * 60,
     # enable_memory_snapshot=True,
     # experimental_options={"enable_gpu_snapshot": True},
@@ -165,19 +165,16 @@ class KokoroTTS:
         return self.webapp
 
     @modal.method()
-    async def register_client(self, d: modal.Dict, client_id: str):
+    async def run_tunnel_client(self, d: modal.Dict):
         try:
-            print(f"Registering client {client_id} for websocket url: {self.websocket_url}")
-            d.put("url", self.websocket_url)
+            print(f"Sending websocket url: {self.websocket_url}")
+            await d.put.aio("url", self.websocket_url)
             
-            while not d.contains(client_id):
-                await asyncio.sleep(0.100)
-                
-            while still_running := await d.get.aio(client_id):
-                await asyncio.sleep(0.100)
+            while True:
+                await asyncio.sleep(1.0)
 
         except Exception as e:
-            print(f"Error registering client: {type(e)}: {e}")
+            print(f"Error running tunnel client: {type(e)}: {e}")
 
     @modal.method()
     def ping(self):

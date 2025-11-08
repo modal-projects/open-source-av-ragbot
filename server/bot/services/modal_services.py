@@ -29,36 +29,86 @@ except ValueError:
     # Handle the case where logger is already initialized
     pass
 
+class ModalTunnelManager:
+    def __init__(
+        self,
+        app_name: str,
+        cls_name: str,
+        lazy_spawn: bool = False,
+        cls_kwargs: dict = None,
+        **kwargs,
+    ):
+        self._app_name = app_name
+        self._cls_name = cls_name
+        self._lazy_spawn = lazy_spawn
+        self._cls_kwargs = cls_kwargs or {}
+
+        self._modal_dict_id = None
+        self._url_dict = None
+        self.function_call = None
+        
+        self._cls = modal.Cls.from_name(app_name, cls_name)(**self._cls_kwargs)
+        if not self._lazy_spawn:
+            self._modal_dict_id = str(uuid.uuid4())
+            self._url_dict = modal.Dict.from_name(
+                f"{self._modal_dict_id}-url-dict", 
+                create_if_missing=True
+            ).hydrate()
+            self._spawn_service(self._url_dict)
+
+    def _spawn_service(self, d: modal.Dict = None):
+        logger.info(f"Spawning service for {self._app_name}.{self._cls_name}")
+        self.function_call = self._cls.run_tunnel_client.spawn(d)
+
+    async def _get_url_from_dict(self, d: modal.Dict):
+        while not await d.contains.aio("url"):
+            await asyncio.sleep(0.100)
+        return await d.get.aio("url")
+
+    async def get_url(self):
+        if not self._lazy_spawn:
+            return await self._get_url_from_dict(self._url_dict)
+        else:
+            with modal.Dict.ephemeral() as d:
+                self._spawn_service(d)
+                return await self._get_url_from_dict(d)
+
+    def close(self):
+        if self._lazy_spawn:
+            try:
+                modal.Dict.objects.delete(f"{self._modal_dict_id}-url-dict")
+            except Exception as e:
+                logger.error(f"Error deleting modal dict: {type(e)}: {e}")
+        if self.function_call:
+            self.function_call.cancel()
+            self.function_call = None
+
+    def __del__(self):
+        self.close()
+
 class ModalWebsocketService(WebsocketService):
     def __init__(
         self, 
-        app_name: str = None,
-        cls_name: str = None,
+        modal_tunnel_manager: ModalTunnelManager = None,
         websocket_url: str = None,
         reconnect_on_error: bool = True,
         **kwargs
     ):
         super().__init__(reconnect_on_error=reconnect_on_error, **kwargs)
+
+        self.modal_tunnel_manager = modal_tunnel_manager
         self._websocket_url = websocket_url
-        self._app_name = app_name
-        self._cls_name = cls_name
+        
+        if self.modal_tunnel_manager:
+            logger.info(f"Using Modal Tunnels")
+        elif self._websocket_url:
+            logger.info(f"Using websocket URL: {self._websocket_url}")
+        else:
+            raise Exception("Either modal_tunnel_manager or websocket_url must be provided")
 
         self._receive_task = None
 
-        self.call_id = None
-        self.modal_client_id = str(uuid.uuid4())
-        self.registry_dict = modal.Dict.from_name(f"{self.modal_client_id}-websocket-client-registry", create_if_missing=True)
-        self.registry_dict.put(self.modal_client_id, True)
-        if self._app_name and self._cls_name:
-            logger.info(f"Spawning service for {self._app_name}.{self._cls_name} with client id {self.modal_client_id}")
-            ws_service = modal.Cls.from_name(self._app_name, self._cls_name)()
-            self.call_id = ws_service.register_client.spawn(self.registry_dict, self.modal_client_id)
-        elif not self._websocket_url:
-            raise Exception("Either app_name and cls_name or websocket_url must be provided")
-        else:
-            logger.info(f"Using websocket URL: {self._websocket_url}")
         
-
     async def _report_error(self, error: ErrorFrame):
         await self._call_event_handler("on_connection_error", error.error)
         await self.push_error(error)
@@ -69,29 +119,18 @@ class ModalWebsocketService(WebsocketService):
         retries = 240 # 2 minutes
         while self._websocket_url is None and retries > 0:
             retries -= 1
-            self._websocket_url = await self.registry_dict.get.aio("url")
-            await asyncio.sleep(0.500)
+            self._websocket_url = await self.modal_tunnel_manager.get_url()
+            await asyncio.sleep(0.100)
         if self._websocket_url is None:
             raise Exception("Failed to get websocket URL")
         
-        logger.info(f"Connectingo to: {self._websocket_url}")
+        logger.info(f"Connecting to: {self._websocket_url}")
         await self._connect_websocket()
 
         if self._websocket and not self._receive_task:
             self._receive_task = self.create_task(self._receive_task_handler(self._report_error))
 
         logger.info(f"Connected to: {self._websocket_url}")
-
-    def __del__(self):
-        self._cleanup()
-    
-    def _cleanup(self):
-        # Reset state only after everything is cleaned up
-        self._websocket = None
-        if self.call_id:
-            self.call_id.cancel()
-            self.call_id = None
-        modal.Dict.objects.delete(f"{self.modal_client_id}-websocket-client-registry")
 
     async def _disconnect(self):
         """Disconnect from WebSocket and clean up tasks."""
@@ -103,16 +142,12 @@ class ModalWebsocketService(WebsocketService):
 
             # Now close the websocket
             await self._disconnect_websocket()
-
-            if self.call_id:
-                self.registry_dict.put(self.modal_client_id, False)
-                self.call_id.gather()
-                self.call_id = None
     
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
         finally:
-            self._cleanup()
+            if self.modal_tunnel_manager:
+                self.modal_tunnel_manager.close()
 
     async def _connect_websocket(self):
         """Establish WebSocket connection to API."""
