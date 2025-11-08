@@ -86,7 +86,7 @@ with image.imports():
     experimental_options={"enable_gpu_snapshot": True},
     region=SERVICE_REGIONS,
     # uncomment min containers for testing
-    min_containers=1,
+    # min_containers=1,
     scaledown_window=10,
 )
 @modal.concurrent(max_inputs=20)

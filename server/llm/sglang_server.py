@@ -84,7 +84,7 @@ app: Final[modal.App] = modal.App(APP_NAME)
         "enable_gpu_snapshot": True,
     },
     scaledown_window=10,
-    min_containers=1,
+    # min_containers=1,
     region=SERVICE_REGIONS,
 )
 class SGLangServer:

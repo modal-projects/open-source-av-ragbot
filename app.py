@@ -50,7 +50,7 @@ with bot_image.imports():
     region=SERVICE_REGIONS,
     enable_memory_snapshot=True,
     max_inputs=1,
-    min_containers=1,
+    # min_containers=1,
 )
 class BotServer:
 
