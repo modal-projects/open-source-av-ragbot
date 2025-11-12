@@ -65,6 +65,12 @@ def get_gpu_memory_usage():
 
 app: Final[modal.App] = modal.App(APP_NAME)
 
+with sglang_image.imports():
+    import json
+    import time
+    import urllib.request
+    import requests
+
 @app.cls(
     image=sglang_image,
     cpu=64,
@@ -89,10 +95,7 @@ class SGLangServer:
     def _startup(self) -> None:
         """Start the SGLang server and block until it is healthy."""
 
-        import json
-        import time
-        import urllib.request
-        import requests
+        
 
         cmd: list[str] = [
             "python",
@@ -242,8 +245,8 @@ class SGLangServer:
 if __name__ == "__main__":
 
     import time
-    import uuid
-
+    import urllib.request
+    import json
 
     def make_request(server_cls):
         start_time = time.time()
@@ -254,15 +257,22 @@ if __name__ == "__main__":
                 time.sleep(0.100)
             sglang_url = d.get("url")
             print(f"SGLang URL: {sglang_url}")
-            response = requests.post(
-                f"{sglang_url}/v1/chat/completions", 
-                timeout=20*60,
-                json={
-                    "model": MODEL_NAME,
-                    "messages": [{"role": "user", "content": "Hello, how are you?"}],
-                }
-            )
-            print(response.json())
+
+            url = f"{sglang_url}/v1/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            data = json.dumps({
+                "model": MODEL_NAME,
+                "messages": [{"role": "user", "content": "Hello, how are you?"}],
+            }).encode("utf-8")
+
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=20*60) as response:
+                    resp_data = response.read().decode("utf-8")
+                    print(json.loads(resp_data))
+            except Exception as e:
+                print(f"Request failed: {e}")
+
             d.put("is_running", False)
             time.sleep(2.0)
             call_id.cancel()
