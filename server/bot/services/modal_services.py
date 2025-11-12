@@ -53,7 +53,8 @@ class ModalTunnelManager:
             self._url_dict = modal.Dict.from_name(
                 f"{self._modal_dict_id}-url-dict", 
                 create_if_missing=True
-            ).hydrate()
+            )
+            self._url_dict.put("is_running", True)
             self._spawn_service(self._url_dict)
 
     def _spawn_service(self, d: modal.Dict = None):
@@ -70,17 +71,37 @@ class ModalTunnelManager:
             return await self._get_url_from_dict(self._url_dict)
         else:
             with modal.Dict.ephemeral() as d:
+                await d.put.aio("is_running", True)
                 self._spawn_service(d)
                 return await self._get_url_from_dict(d)
 
-    def close(self):
+    async def close(self):
         if self._lazy_spawn:
             try:
-                modal.Dict.objects.delete(f"{self._modal_dict_id}-url-dict")
+                await self._url_dict.put.aio("is_running", False)
+                await modal.Dict.objects.delete.aio(f"{self._modal_dict_id}-url-dict")
+                await self.function_call.gather.aio()
+                self._url_dict = None
+                self.function_call = None
             except Exception as e:
                 logger.error(f"Error deleting modal dict: {type(e)}: {e}")
         if self.function_call:
             self.function_call.cancel()
+            self.function_call = None
+
+    def _try_force_close(self):
+        if self._lazy_spawn and self._url_dict:
+            try:
+                self._url_dict.put("is_running", False)
+                modal.Dict.objects.delete(f"{self._modal_dict_id}-url-dict")
+                self._url_dict = None
+            except Exception as e:
+                logger.error(f"Error deleting modal dict: {type(e)}: {e}")
+        if self.function_call:
+            try:
+                self.function_call.cancel()
+            except Exception as e:
+                logger.error(f"Error canceling function call: {type(e)}: {e}")
             self.function_call = None
 
     def __del__(self):
@@ -147,7 +168,7 @@ class ModalWebsocketService(WebsocketService):
             logger.error(f"Error during disconnect: {e}")
         finally:
             if self.modal_tunnel_manager:
-                self.modal_tunnel_manager.close()
+                await self.modal_tunnel_manager.close()
 
     async def _connect_websocket(self):
         """Establish WebSocket connection to API."""

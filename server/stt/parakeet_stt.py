@@ -347,8 +347,15 @@ class Transcriber:
             print(f"Sending websocket url: {self.websocket_url}")
             await d.put.aio("url", self.websocket_url)
             
-            while True:
+            while not await d.contains.aio("is_running"):
                 await asyncio.sleep(1.0)
+
+            print("Tunnel client is running. Waiting for it to finish.")
+            
+            while await d.get.aio("is_running"):
+                await asyncio.sleep(1.0)
+
+            print("Tunnel client finished.")
 
         except Exception as e:
             print(f"Error running tunnel client: {type(e)}: {e}")

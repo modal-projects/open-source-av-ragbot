@@ -16,9 +16,9 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
         "kokoro>=0.9.4",
-        "soundfile",
+        # "soundfile",
         "fastapi[standard]",
-        "librosa",
+        "pydub",
         "uvicorn[standard]",
     )
     .env({
@@ -31,28 +31,30 @@ with image.imports():
     from kokoro import KPipeline, KModel
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
     from starlette.websockets import WebSocketState
-    import librosa
+    from pydub import AudioSegment
     import threading
     import uvicorn
 
 DEFAULT_VOICE = 'am_puck'
 UVICORN_PORT = 8000
 
+kokoro_hf_cache = modal.Volume.from_name("kokoro-tts-volume", create_if_missing=True)
+
 @app.cls(
     image=image,
-    # volumes={"/cache": vol},
+    volumes={"/cache": kokoro_hf_cache},
     gpu=["A100", "L40S"],
     # NOTE, uncomment min_containers = 1 for testing and avoiding cold start times
     # min_containers=1, 
     region=SERVICE_REGIONS,
     timeout= 60 * 60,
-    # enable_memory_snapshot=True,
-    # experimental_options={"enable_gpu_snapshot": True},
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=10)
 class KokoroTTS:
 
-    @modal.enter()
+    @modal.enter(snap=True)
     async def load(self):
         
         self.tunnel_ctx = None
@@ -69,6 +71,9 @@ class KokoroTTS:
             for _ in self._stream_tts(warm_up_prompt):
                 pass
         print("✅ Model warmed up!")
+
+    @modal.enter(snap=False)
+    async def restore(self):
 
         self.webapp = FastAPI()
 
@@ -170,8 +175,15 @@ class KokoroTTS:
             print(f"Sending websocket url: {self.websocket_url}")
             await d.put.aio("url", self.websocket_url)
             
-            while True:
+            while not await d.contains.aio("is_running"):
                 await asyncio.sleep(1.0)
+
+            print("Tunnel client is running. Waiting for it to finish.")
+
+            while await d.get.aio("is_running"):
+                await asyncio.sleep(1.0)
+
+            print("Tunnel client finished.")
 
         except Exception as e:
             print(f"Error running tunnel client: {type(e)}: {e}")
@@ -194,7 +206,7 @@ class KokoroTTS:
             voice = DEFAULT_VOICE
 
         try:
-            stream_start = time.time()
+            stream_start = time.perf_counter()
             chunk_count = 0
             first_chunk_time = None
 
@@ -207,8 +219,7 @@ class KokoroTTS:
                 speed = speed,
             ):
                 if first_chunk_time is None:
-                    first_chunk_time = time.time()
-                    print(f"⏱️  Time to first chunk: {first_chunk_time - stream_start:.3f} seconds")
+                    print(f"⏱️  Time to first chunk: {(time.perf_counter() - stream_start):.3f} seconds")
                 
                 print(f"gs: {gs}, ps: {ps}, chunk len: {len(chunk)}")
                 chunk_count += 1
@@ -220,17 +231,26 @@ class KokoroTTS:
                     # Ensure tensor is on CPU and convert to numpy for efficiency
                     audio_numpy = chunk.cpu().numpy()
 
-                    a, b = librosa.effects.trim(audio_numpy, top_db=30)[1]
-                    a = int(a*0.9) # remove leading silence with 10% margin
-                    b = len(audio_numpy) # keep trailing silence
-                    print(f"Trimmed {len(audio_numpy)} samples to {b-a} samples")
-                    audio_numpy = audio_numpy[a:b]
-                    
-                    # Convert float32 audio to int16 PCM (standard for WAV)
-                    # Clamp to [-1, 1] range and scale to int16 range
-                    audio_numpy = audio_numpy.clip(-1.0, 1.0)
-                    pcm_data = (audio_numpy * 32767).astype('int16')
-                    yield pcm_data.tobytes()
+                    audio_numpy = audio_numpy.clip(-1.0, 1.0) * 32767
+                    audio_numpy = audio_numpy.astype('int16')
+
+                    audio_segment = AudioSegment(
+                        audio_numpy.tobytes(),
+                        frame_rate=24000,
+                        sample_width=2,
+                        channels=1
+                    )
+
+                    def detect_leading_silence(sound, silence_threshold=-50.0, chunk_size=10):
+                        trim_ms = 0  # ms
+                        while sound[trim_ms:trim_ms+chunk_size].dBFS < silence_threshold:
+                            trim_ms += chunk_size
+
+                        return trim_ms - chunk_size # return the index of the last chunk with silence for padding
+
+                    speech_start_idx = detect_leading_silence(audio_segment)
+                    audio_segment = audio_segment[speech_start_idx:]
+                    yield audio_segment.raw_data
                     
                 except Exception as e:
                     print(f"❌ Error converting chunk {chunk_count}: {e}")
@@ -259,7 +279,7 @@ def get_kokoro_server_url():
 # warm up snapshots if needed
 if __name__ == "__main__":
     kokoro_tts = modal.Cls.from_name("kokoro-tts", "KokoroTTS").with_options(scaledown_window=2)
-    num_cold_starts = 20
+    num_cold_starts = 5
     for _ in range(num_cold_starts):
         start_time = time.time()
         kokoro_tts().ping.remote()
