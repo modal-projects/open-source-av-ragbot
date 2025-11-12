@@ -6,10 +6,7 @@ import os
 import sys
 from typing import Final
 import modal
-from tqdm import tqdm
 import asyncio
-
-import requests
 
 from server import SERVICE_REGIONS
 
@@ -221,11 +218,18 @@ class SGLangServer:
     @modal.method()
     async def run_tunnel_client(self, d: modal.Dict):
         try:
-            print(f"Sending url: {self.tunnel.url}")
+            print(f"Sending  url: {self.tunnel.url}")
             await d.put.aio("url", self.tunnel.url)
             
-            while True:
+            while not await d.contains.aio("is_running"):
                 await asyncio.sleep(1.0)
+
+            print("Tunnel client is running. Waiting for it to finish.")
+            
+            while await d.get.aio("is_running"):
+                await asyncio.sleep(1.0)
+
+            print("Tunnel client finished.")
 
         except Exception as e:
             print(f"Error running tunnel client: {type(e)}: {e}")
@@ -244,9 +248,8 @@ if __name__ == "__main__":
     def make_request(server_cls):
         start_time = time.time()
         with modal.Dict.ephemeral() as d:
-            client_id = str(uuid.uuid4())
-            d.put(client_id, True)
-            call_id = server_cls().run_tunnel_client.spawn(d, client_id)
+            d.put("is_running", True)
+            call_id = server_cls().run_tunnel_client.spawn(d)
             while not d.contains("url"):
                 time.sleep(0.100)
             sglang_url = d.get("url")
@@ -260,6 +263,8 @@ if __name__ == "__main__":
                 }
             )
             print(response.json())
+            d.put("is_running", False)
+            time.sleep(2.0)
             call_id.cancel()
             end_time = time.time()
             print(f"Time taken to ping: {end_time - start_time:.3f} seconds")

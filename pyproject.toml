@@ -3,6 +3,5 @@ name = "open-source-voice-bot"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile]==0.0.92",
-    "modal==1.2.1"
+    "modal==1.2.1",
 ]
