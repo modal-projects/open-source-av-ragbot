@@ -2,7 +2,6 @@ import time
 import asyncio
 import uuid
 import modal
-from torch import miopen_batch_norm
 
 from server import SERVICE_REGIONS
 
