@@ -1,0 +1,14 @@
+# Modal deployment requirements
+modal>=1.2.1
+
+# These are installed in Modal containers, listed here for reference:
+# pipecat-ai[webrtc,openai,silero,local-smart-turn,noisereduce,soundfile]==0.0.92
+# omnilingual-asr==0.1.0
+# transformers==4.47.1
+# vllm==0.6.6.post1
+# torch==2.5.1
+# fastapi[standard]==0.115.4
+# openai==1.57.2
+# loguru==0.7.2
+# soundfile==0.12.1
+# numpy==1.26.4

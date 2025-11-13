@@ -1,0 +1,229 @@
+.app {
+  width: 100%;
+}
+
+.container {
+  background: white;
+  border-radius: 20px;
+  padding: 2rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.title {
+  font-size: 3rem;
+  font-weight: bold;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  font-size: 1.2rem;
+  color: #666;
+  font-weight: 300;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.speaker-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.speaker-control label {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.speaker-input {
+  padding: 0.5rem 1rem;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  width: 100px;
+  transition: border-color 0.2s;
+}
+
+.speaker-input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.speaker-input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.speaker-hint {
+  font-size: 0.85rem;
+  color: #999;
+  font-weight: 400;
+}
+
+.connect-button,
+.mute-button {
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s;
+  color: white;
+}
+
+.connect-button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.connect-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+}
+
+.connect-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.connect-button.connected {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.mute-button {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.mute-button.muted {
+  background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+.mute-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(79, 172, 254, 0.4);
+}
+
+.transcript-container {
+  margin-bottom: 2rem;
+}
+
+.transcript-title {
+  font-size: 1.5rem;
+  color: #333;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.transcript {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 1.5rem;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 2px solid #e9ecef;
+}
+
+.transcript-empty {
+  color: #999;
+  text-align: center;
+  font-style: italic;
+}
+
+.transcript-line {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  background: white;
+  border-radius: 8px;
+  line-height: 1.5;
+}
+
+.transcript-line:last-child {
+  margin-bottom: 0;
+}
+
+.info {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.info h3 {
+  font-size: 1.2rem;
+  color: #333;
+  margin-bottom: 1rem;
+}
+
+.info ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.info li {
+  padding: 0.5rem 0;
+  color: #555;
+  line-height: 1.6;
+}
+
+.info li:before {
+  content: "✓ ";
+  color: #667eea;
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+
+.footer {
+  text-align: center;
+  padding-top: 1.5rem;
+  border-top: 2px solid #f0f0f0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.footer a {
+  color: #667eea;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+  .container {
+    padding: 1.5rem;
+  }
+
+  .title {
+    font-size: 2rem;
+  }
+
+  .subtitle {
+    font-size: 1rem;
+  }
+
+  .connect-button,
+  .mute-button {
+    font-size: 1rem;
+    padding: 0.75rem 1.5rem;
+  }
+}
