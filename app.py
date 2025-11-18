@@ -197,21 +197,6 @@ def serve_frontend():
                 bot_func_call.cancel()
                 raise e
 
-    # @app.post("/api/offer")
-    # async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
-    #     """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
-
-    #     # Prepare runner arguments with the callback to run your bot
-    #     async def webrtc_connection_callback(connection):
-    #         background_tasks.add_task(run_bot, connection)
-
-    #     # Delegate handling to SmallWebRTCRequestHandler
-    #     answer = await small_webrtc_handler.handle_web_request(
-    #         request=request,
-    #         webrtc_connection_callback=webrtc_connection_callback,
-    #     )
-    #     return answer
-
     return web_app
 
 # warm up snapshots if needed
