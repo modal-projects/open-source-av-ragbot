@@ -80,7 +80,7 @@ with image.imports():
 
 @app.cls(
     volumes={"/cache": model_cache}, 
-    gpu=["A100"], 
+    gpu="L40S", 
     image=image,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
@@ -402,7 +402,7 @@ class NoStdStreams(object):
 # warm up snapshots if needed
 if __name__ == "__main__":
     parakeet_stt = modal.Cls.from_name("parakeet-transcription", "Transcriber")
-    num_cold_starts = 5
+    num_cold_starts = 50
     for _ in range(num_cold_starts):
         start_time = time.time()
         parakeet_stt().ping.remote()

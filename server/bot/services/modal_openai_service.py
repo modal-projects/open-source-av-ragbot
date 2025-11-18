@@ -6,7 +6,7 @@ import time
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
 
-from pipecat.frames.frames import StopFrame, CancelFrame
+from pipecat.frames.frames import StopFrame, CancelFrame, TTSSpeakFrame
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.utils.tracing.service_decorators import traced_llm
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -29,7 +29,8 @@ class ModalOpenAILLMService(OpenAILLMService):
         *args,
         modal_tunnel_manager: ModalTunnelManager = None,
         base_url: str = None,
-        **kwargs):
+        **kwargs
+    ):
         if not kwargs.get("api_key"):
             kwargs["api_key"] = "super-secret-key" 
         
@@ -39,17 +40,56 @@ class ModalOpenAILLMService(OpenAILLMService):
             logger.info(f"Using Modal Tunnels")
         if self.base_url:
             logger.info(f"Using URL: {self.base_url}")
+            if not base_url.endswith("/v1"):
+                base_url = f"{base_url}/v1"
         else:
-            raise Exception("base_url must be provided")
+            self._connect_client_task = asyncio.create_task(self._delayed_create_client(**kwargs))
 
-        if not base_url.endswith("/v1"):
-            base_url = f"{base_url}/v1"
-        
         super().__init__(*args, base_url=base_url, **kwargs)
+
+        self._client = None
     
         # Create the JSON parser instance
         self.json_parser = ModalRagStreamingJsonParser(self)
-        
+
+    async def _get_url(self):
+        if self.modal_tunnel_manager:
+            print(f"Getting URL from modal tunnel manager")
+            url = await self.modal_tunnel_manager.get_url()
+            print(f"Got URL from tunnel manager: {url}")
+            if not url.endswith("/v1"):
+                url = f"{url}/v1"
+            self.base_url = url
+        return self.base_url
+
+    async def _delayed_create_client(self, **kwargs):
+        print(f"Delayed creating client task started...")
+        self.base_url = await self._get_url()
+        print(f"Got Base URL from _get_url: {self.base_url}")
+            
+        print(f"Creating client with base URL: {self.base_url}")
+        self._client = self.create_client(
+            base_url=self.base_url,
+            **kwargs
+        )
+            
+
+    # @classmethod
+    # async def from_tunnel_manager(cls, modal_tunnel_manager: ModalTunnelManager, **kwargs):
+
+    #     if not kwargs.get("base_url", None):
+    #         base_url = await modal_tunnel_manager.get_url()
+            
+    #         return cls(
+    #             modal_tunnel_manager=modal_tunnel_manager,
+    #             base_url=base_url,
+    #             **kwargs
+    #         )
+    #     else:
+    #         return cls(
+    #             modal_tunnel_manager=modal_tunnel_manager,
+    #             **kwargs
+    #         )
 
     async def stop(self, frame: StopFrame):
         await super().stop(frame)
@@ -65,6 +105,11 @@ class ModalOpenAILLMService(OpenAILLMService):
 
     @traced_llm
     async def _process_context(self, context: OpenAILLMContext):
+
+        if not self._connect_client_task.done():
+            await self.push_frame(TTSSpeakFrame("My apologies, I'm still setting up a few things. I'll respond as soon as I'm ready."))
+            return
+
 
         await self.start_ttfb_metrics()
 

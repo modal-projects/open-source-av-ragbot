@@ -75,7 +75,7 @@ with sglang_image.imports():
     image=sglang_image,
     cpu=64,
     memory=256*1024,
-    gpu=["H100!"],
+    gpu="H100!",
     timeout=10 * 60,
     volumes={
         HF_CACHE_PATH: HF_CACHE_VOL,
@@ -280,7 +280,7 @@ if __name__ == "__main__":
             print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
 
     sglang_server = modal.Cls.from_name("sglang-server", "SGLangServer")
-    num_cold_starts = 3
+    num_cold_starts = 50
     for _ in range(num_cold_starts):
         make_request(sglang_server)
         time.sleep(30.0) # allow container to drain

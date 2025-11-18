@@ -1,4 +1,5 @@
 import sys
+import asyncio
 from loguru import logger
 
 from pipecat.pipeline.pipeline import Pipeline
@@ -64,6 +65,53 @@ async def run_bot(
     - RTVI event handling
     """
 
+    # spawn services first (happens on modaltunnelmanager init)
+    sglang_tunnel_manager = ModalTunnelManager(
+        app_name="sglang-server",
+        cls_name="SGLangServer",
+    )
+
+    # get_llm_service_task = asyncio.create_task(
+    #     ModalOpenAILLMService.from_tunnel_manager(
+    #         model="Qwen/Qwen3-4B-Instruct-2507",
+    #         modal_tunnel_manager=sglang_tunnel_manager,
+    #         params=OpenAILLMService.InputParams(
+    #             extra={
+    #                 "stream": True,
+    #             },
+    #         ),
+    #     )
+    # )
+
+    llm = ModalOpenAILLMService(
+        model="Qwen/Qwen3-4B-Instruct-2507",
+        modal_tunnel_manager=sglang_tunnel_manager,
+        params=OpenAILLMService.InputParams(
+            extra={
+                "stream": True,
+            },
+        ),
+    )
+
+    parakeet_stt_tunnel_manager=ModalTunnelManager(
+        app_name="parakeet-transcription",
+        cls_name="Transcriber",
+    )
+    if enable_moe_and_dal:
+        kokoro_tts_tunnel_manager_moe = ModalTunnelManager(
+            app_name="kokoro-tts",
+            cls_name="KokoroTTS",
+        )
+        kokoro_tts_tunnel_manager_dal = ModalTunnelManager(
+            app_name="kokoro-tts",
+            cls_name="KokoroTTS",
+        )
+    else:
+        kokoro_tts_tunnel_manager = ModalTunnelManager(
+            app_name="kokoro-tts",
+            cls_name="KokoroTTS",
+        )
+
     transport_params = TransportParams(
         audio_in_enabled=True,
         audio_in_sample_rate=_AUDIO_INPUT_SAMPLE_RATE,
@@ -88,30 +136,37 @@ async def run_bot(
     )
 
     stt = ModalParakeetSegmentedSTTService(
-        modal_tunnel_manager=ModalTunnelManager(
-            app_name="parakeet-transcription",
-            cls_name="Transcriber",
-        ),
+        modal_tunnel_manager=parakeet_stt_tunnel_manager,
     )
 
     modal_rag = ModalRag(chroma_db=chroma_db, similarity_top_k=3, num_adjacent_nodes=2)
 
-    modal_sglang_tunnel_manager = ModalTunnelManager(
-        app_name="sglang-server",
-        cls_name="SGLangServer",
-    )
-    base_url = await modal_sglang_tunnel_manager.get_url()
+     # only add animation processor and dual speaker setup if video is enabled
+    if enable_moe_and_dal:
+        ta = MoeDalBotAnimation()
+        moe_tts = ModalKokoroTTSService(
+            modal_tunnel_manager=kokoro_tts_tunnel_manager_moe,
+            speaker="moe",
+            voice="am_puck",
+            speed=1.3,
+        )
+        dal_tts = ModalKokoroTTSService(
+            modal_tunnel_manager=kokoro_tts_tunnel_manager_dal,
+            speaker="dal",
+            voice="am_fenrir",
+            speed=1.5,
+        )
+        speaker_mixer = UnisonSpeakerMixer(speakers=["moe", "dal"])
+    else:
+        tts = ModalKokoroTTSService(
+            modal_tunnel_manager=kokoro_tts_tunnel_manager,
+            voice="am_puck",
+            speed=1.35,
+        )
 
-    llm = ModalOpenAILLMService(
-        model="Qwen/Qwen3-4B-Instruct-2507",
-        modal_tunnel_manager=modal_sglang_tunnel_manager,
-        base_url=base_url,
-        params=OpenAILLMService.InputParams(
-            extra={
-                "stream": True,
-            },
-        ),
-    )
+
+    # RTVI events for Pipecat client UI
+    rtvi = RTVIProcessor()
 
     messages = [
         {
@@ -127,13 +182,12 @@ async def run_bot(
     # Set up conversation context and management
     # The context_aggregator will automatically collect conversation context
     context = OpenAILLMContext(messages)
+
+    # llm = await get_llm_service_task
     context_aggregator = llm.create_context_aggregator(
         context,
         user_params=LLMUserAggregatorParams(aggregation_timeout=0.05),
     )
-
-    # RTVI events for Pipecat client UI
-    rtvi = RTVIProcessor()
 
     processors = [
         transport.input(),
@@ -144,29 +198,7 @@ async def run_bot(
         llm,
         
     ]
-    
-    # only add animation processor and dual speaker setup if video is enabled
     if enable_moe_and_dal:
-        ta = MoeDalBotAnimation()
-        moe_tts = ModalKokoroTTSService(
-            modal_tunnel_manager=ModalTunnelManager(
-                app_name="kokoro-tts",
-                cls_name="KokoroTTS",
-            ),
-            speaker="moe",
-            voice="am_puck",
-            speed=1.3,
-        )
-        dal_tts = ModalKokoroTTSService(
-            modal_tunnel_manager=ModalTunnelManager(
-                app_name="kokoro-tts",
-                cls_name="KokoroTTS",
-            ),
-            speaker="dal",
-            voice="am_fenrir",
-            speed=1.5,
-        )
-        speaker_mixer = UnisonSpeakerMixer(speakers=["moe", "dal"])
         processors += [
             ParallelPipeline(
                 [moe_tts],
@@ -176,14 +208,7 @@ async def run_bot(
             ta,
         ]
     else:
-        processors.append(ModalKokoroTTSService(
-            modal_tunnel_manager=ModalTunnelManager(
-                app_name="kokoro-tts",
-                cls_name="KokoroTTS",
-            ),
-            voice="am_puck",
-            speed=1.35,
-        ))
+        processors.append(tts)
 
     processors += [
         transport.output(),

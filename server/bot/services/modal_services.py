@@ -104,8 +104,6 @@ class ModalTunnelManager:
                 logger.error(f"Error canceling function call: {type(e)}: {e}")
             self.function_call = None
 
-    def __del__(self):
-        self.close()
 
 class ModalWebsocketService(WebsocketService):
     def __init__(

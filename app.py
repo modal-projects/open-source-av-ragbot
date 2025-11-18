@@ -1,12 +1,15 @@
 import asyncio
 from pathlib import Path
+from re import escape
 import time
 
 import modal
 
 from server import SERVICE_REGIONS
 
-app = modal.App("moe-and-dal-ragbot")
+APP_NAME = "modal-voice-assistant"
+
+app = modal.App(APP_NAME)
 
 # container specifications for the Pipecat pipeline
 bot_image = (
@@ -33,6 +36,8 @@ bot_image = (
     .add_local_dir("server", remote_path="/root/server")
 )
 
+bot_sessions_dict = modal.Dict.from_name(f"{APP_NAME}-bot-sessions", create_if_missing=True)
+
 MINUTES = 60  # seconds in a minute
 
 with bot_image.imports():
@@ -52,7 +57,7 @@ with bot_image.imports():
     max_inputs=1,
     # min_containers=1,
 )
-class BotServer:
+class ModalVoiceAssistant:
 
     @modal.enter(snap=True)
     def load(self):
@@ -60,7 +65,7 @@ class BotServer:
         self.chroma_db = ChromaVectorDB()
 
     @modal.method()
-    async def serve_bot(self, d: modal.Dict):
+    async def run_bot(self, d: modal.Dict):
         """Launch the bot process with WebRTC connection and run the bot pipeline.
 
         Args:
@@ -72,7 +77,7 @@ class BotServer:
         
 
         try:
-
+            start_time = time.time()
             offer = await d.get.aio("offer")
             ice_servers = await d.get.aio("ice_servers")
             ice_servers = [
@@ -81,13 +86,16 @@ class BotServer:
                 )
                 for ice_server in ice_servers
             ]
-
+            print(f"Time taken to get ice servers: {time.time() - start_time:.3f} seconds")
             webrtc_connection = SmallWebRTCConnection(ice_servers)
             await webrtc_connection.initialize(sdp=offer["sdp"], type=offer["type"])
 
             @webrtc_connection.event_handler("closed")
             async def handle_disconnected(webrtc_connection: SmallWebRTCConnection):
                 logger.info("WebRTC connection to bot closed.")
+
+            print(f"Time taken to initialize WebRTC connection: {time.time() - start_time:.3f} seconds")
+            start_time = time.time()
 
             print("Starting bot process.")
             bot_task = asyncio.create_task(
@@ -98,10 +106,18 @@ class BotServer:
                 )
             )
 
+            print(f"Time taken to create bot task: {time.time() - start_time:.3f} seconds")
+            start_time = time.time()
+
             answer = webrtc_connection.get_answer()
             await d.put.aio("answer", answer)
 
+            print(f"Time taken to put answer: {time.time() - start_time:.3f} seconds")
+            start_time = time.time()
+
+
             await bot_task
+
 
         except Exception as e:
             raise RuntimeError(f"Failed to start bot pipeline: {e}")
@@ -123,7 +139,7 @@ frontend_image = (
 
 with frontend_image.imports():
     from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse
+    from fastapi.responses import HTMLResponse, FileResponse
     from fastapi.staticfiles import StaticFiles
 
 @app.function(image=frontend_image)
@@ -143,10 +159,12 @@ def serve_frontend():
 
     @web_app.get("/")
     async def root():
-        return HTMLResponse(content=open("/frontend/index.html").read())
+        return FileResponse("/frontend/index.html")
     
     @web_app.post("/offer")
     async def offer(offer: dict):
+
+        start_time = time.time()
 
         _ICE_SERVERS = [
             {
@@ -159,24 +177,51 @@ def serve_frontend():
             await d.put.aio("ice_servers", _ICE_SERVERS)
             await d.put.aio("offer", offer)
 
-            BotServer().serve_bot.spawn(d)
+            print(f"Time taken to put offer: {time.time() - start_time:.3f} seconds")
+            start_time = time.time()
 
-            while True:
-                answer = await d.get.aio("answer")
-                if answer:
-                    return answer
-                await asyncio.sleep(0.1)
+            bot_func_call = ModalVoiceAssistant().run_bot.spawn(d)
+
+            print(f"Time taken to spawn bot: {time.time() - start_time:.3f} seconds")
+            start_time = time.time()
+
+            try:
+                while True:
+                    answer = await d.get.aio("answer")
+                    if answer:
+                        print(f"Time taken to get answer: {time.time() - start_time:.3f} seconds")
+                        return answer
+                    await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error signaling with bot from server: {type(e)}: {e}")
+                bot_func_call.cancel()
+                raise e
+
+    # @app.post("/api/offer")
+    # async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
+    #     """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
+
+    #     # Prepare runner arguments with the callback to run your bot
+    #     async def webrtc_connection_callback(connection):
+    #         background_tasks.add_task(run_bot, connection)
+
+    #     # Delegate handling to SmallWebRTCRequestHandler
+    #     answer = await small_webrtc_handler.handle_web_request(
+    #         request=request,
+    #         webrtc_connection_callback=webrtc_connection_callback,
+    #     )
+    #     return answer
 
     return web_app
 
 # warm up snapshots if needed
 if __name__ == "__main__":
-    bot_server = modal.Cls.from_name("moe-and-dal-ragbot", "BotServer")
-    num_cold_starts = 5
+    bot_server = modal.Cls.from_name(APP_NAME, "ModalVoiceAssistant")
+    num_cold_starts = 50
     for _ in range(num_cold_starts):
         start_time = time.time()
         bot_server().ping.remote()
         end_time = time.time()
         print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
         time.sleep(10.0) # allow container to drain
-    print(f"BotServer cold starts: {num_cold_starts}")
+    print(f"ModalVoiceAssistant cold starts: {num_cold_starts}")

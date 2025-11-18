@@ -43,7 +43,7 @@ kokoro_hf_cache = modal.Volume.from_name("kokoro-tts-volume", create_if_missing=
 @app.cls(
     image=image,
     volumes={"/cache": kokoro_hf_cache},
-    gpu=["A100", "L40S"],
+    gpu="L40S",
     # NOTE, uncomment min_containers = 1 for testing and avoiding cold start times
     # min_containers=1, 
     region=SERVICE_REGIONS,
@@ -279,7 +279,7 @@ def get_kokoro_server_url():
 # warm up snapshots if needed
 if __name__ == "__main__":
     kokoro_tts = modal.Cls.from_name("kokoro-tts", "KokoroTTS").with_options(scaledown_window=2)
-    num_cold_starts = 5
+    num_cold_starts = 50
     for _ in range(num_cold_starts):
         start_time = time.time()
         kokoro_tts().ping.remote()
