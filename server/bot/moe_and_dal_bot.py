@@ -32,6 +32,8 @@ from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 
 from .avatar.animation import MoeDalBotAnimation, get_frames
 
+from .services.modal_kokoro_service import LocalKokoroTTSService
+
 import modal
 
 try:
@@ -53,6 +55,7 @@ async def run_bot(
     webrtc_connection: SmallWebRTCConnection,
     chroma_db: ChromaVectorDB,
     enable_moe_and_dal: bool = _DEFAULT_ENABLE_VIDEO,
+    local_kokoro_tts: LocalKokoroTTSService = None,
 ):
     """Main bot execution function.
 

@@ -29,6 +29,7 @@ bot_image = (
         "aiofiles",
         "fastapi[standard]",
         "huggingface_hub[hf_transfer]",
+        "kokoro==0.9.4",
     )
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
@@ -48,6 +49,7 @@ with bot_image.imports():
     )
 
     from server.bot.moe_and_dal_bot import run_bot
+    from server.bot.services.modal_kokoro_service import LocalKokoroTTSService
 
 @app.cls(
     image=bot_image,
@@ -63,6 +65,11 @@ class ModalVoiceAssistant:
     def load(self):
         from server.bot.processors.modal_rag import ChromaVectorDB
         self.chroma_db = ChromaVectorDB()
+        self.local_kokoro_tts = LocalKokoroTTSService(
+            voice="am_puck",
+            speed=1.3,
+            device="cpu",
+        )
 
     @modal.method()
     async def run_bot(self, d: modal.Dict):
@@ -102,7 +109,8 @@ class ModalVoiceAssistant:
                 run_bot(
                     webrtc_connection, 
                     self.chroma_db, 
-                    enable_moe_and_dal=False
+                    enable_moe_and_dal=False,
+                    local_kokoro_tts=self.local_kokoro_tts
                 )
             )
 

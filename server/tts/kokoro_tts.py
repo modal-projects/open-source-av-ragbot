@@ -15,7 +15,7 @@ def chunk_audio(audio, desired_frame_size):
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
-        "kokoro>=0.9.4",
+        "kokoro==0.9.4",
         # "soundfile",
         "fastapi[standard]",
         "pydub",
@@ -108,7 +108,7 @@ class KokoroTTS:
                         prompt_msg = await prompt_queue.get()
                         print(f"Received prompt msg: {prompt_msg}")
                         start_time = time.perf_counter()
-                        for chunk in self._stream_tts(prompt_msg['text'], voice=prompt_msg['voice']):
+                        for chunk in self._stream_tts(prompt_msg['text'], voice=prompt_msg['voice'], speed=prompt_msg['speed']):
                             await audio_queue.put(chunk)
                             print(f"Sending audio data to queue: {len(chunk)} bytes")
                         end_time = time.perf_counter()
