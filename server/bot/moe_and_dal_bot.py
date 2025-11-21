@@ -2,6 +2,9 @@ import sys
 import asyncio
 from loguru import logger
 
+import datetime
+import wave
+
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -29,6 +32,9 @@ from .services.modal_kokoro_service import ModalKokoroTTSService
 from .processors.unison_speaker_mixer import UnisonSpeakerMixer
 from .services.modal_openai_service import ModalOpenAILLMService
 from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
+
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
+
 
 from .avatar.animation import MoeDalBotAnimation, get_frames
 
@@ -189,6 +195,26 @@ async def run_bot(
         user_params=LLMUserAggregatorParams(aggregation_timeout=0.05),
     )
 
+    audiobuffer = AudioBufferProcessor(
+        num_channels=1,               # 1 for mono, 2 for stereo (user left, bot right)
+        enable_turn_audio=True,      # Enable per-turn audio recording
+    )
+    
+    @audiobuffer.event_handler("on_audio_data")
+    async def on_audio_data(buffer, audio, sample_rate, num_channels):
+        # Save or process the composite audio
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"/recordings/conversation_{timestamp}.wav"
+
+        # Create the WAV file
+        with wave.open(filename, "wb") as wf:
+            wf.setnchannels(num_channels)
+            wf.setsampwidth(2)  # 16-bit audio
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio)
+
+        logger.info(f"Saved recording to {filename}")
+
     processors = [
         transport.input(),
         rtvi,
@@ -212,6 +238,7 @@ async def run_bot(
 
     processors += [
         transport.output(),
+        audiobuffer,
         context_aggregator.assistant(),
     ]
 
@@ -242,6 +269,7 @@ async def run_bot(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Pipecat Client connected")
+        await audiobuffer.start_recording()
         await task.queue_frame(get_frames("listening"))
         
     runner = PipelineRunner()

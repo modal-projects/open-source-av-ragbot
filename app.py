@@ -37,6 +37,7 @@ bot_image = (
 )
 
 bot_sessions_dict = modal.Dict.from_name(f"{APP_NAME}-bot-sessions", create_if_missing=True)
+recordings_volume = modal.Volume.from_name(f"{APP_NAME}-recordings", create_if_missing=True)
 
 MINUTES = 60  # seconds in a minute
 
@@ -55,6 +56,7 @@ with bot_image.imports():
     region=SERVICE_REGIONS,
     enable_memory_snapshot=True,
     max_inputs=1,
+    volumes={"/recordings": recordings_volume},
     # min_containers=1,
 )
 class ModalVoiceAssistant:
