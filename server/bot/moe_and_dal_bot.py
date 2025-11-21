@@ -33,7 +33,7 @@ from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 from .avatar.animation import MoeDalBotAnimation, get_frames
 
 from .services.modal_kokoro_service import LocalKokoroTTSService
-from .processors.fallback import error_detector, backup_gate
+from .processors.canned_intro import CannedIntroPlayer
 
 
 import modal
@@ -75,18 +75,6 @@ async def run_bot(
         app_name="sglang-server",
         cls_name="SGLangServer",
     )
-
-    # get_llm_service_task = asyncio.create_task(
-    #     ModalOpenAILLMService.from_tunnel_manager(
-    #         model="Qwen/Qwen3-4B-Instruct-2507",
-    #         modal_tunnel_manager=sglang_tunnel_manager,
-    #         params=OpenAILLMService.InputParams(
-    #             extra={
-    #                 "stream": True,
-    #             },
-    #         ),
-    #     )
-    # )
 
     llm = ModalOpenAILLMService(
         model="Qwen/Qwen3-4B-Instruct-2507",
@@ -216,17 +204,14 @@ async def run_bot(
     else:
         primary_path.append(tts)
 
-    primary_path.append(error_detector)
-
-    backup_path = [
-        backup_gate,
-        local_kokoro_tts,
+    canned_intro_path = [
+        CannedIntroPlayer(audio_url="https://cdn.modal.com/audio/canned_intro.wav"),
     ]
 
     processors.append(
         ParallelPipeline(
             primary_path,
-            backup_path,
+            canned_intro_path,
         )
     )
     processors += [

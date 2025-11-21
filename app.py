@@ -72,7 +72,7 @@ class ModalVoiceAssistant:
         )
 
     @modal.method()
-    async def run_bot(self, d: modal.Dict):
+    async def serve_bot(self, d: modal.Dict):
         """Launch the bot process with WebRTC connection and run the bot pipeline.
 
         Args:
@@ -147,7 +147,7 @@ frontend_image = (
 
 with frontend_image.imports():
     from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse, FileResponse
+    from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 
 @app.function(image=frontend_image)
@@ -188,7 +188,7 @@ def serve_frontend():
             print(f"Time taken to put offer: {time.time() - start_time:.3f} seconds")
             start_time = time.time()
 
-            bot_func_call = ModalVoiceAssistant().run_bot.spawn(d)
+            bot_func_call = ModalVoiceAssistant().serve_bot.spawn(d)
 
             print(f"Time taken to spawn bot: {time.time() - start_time:.3f} seconds")
             start_time = time.time()
