@@ -61,7 +61,7 @@ class ModalParakeetSegmentedSTTService(ModalWebsocketSegmentedSTTService):
     
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
 
-        if not self._websocket:
+        if not self._connect_websocket_task.done() or not self._websocket:
             logger.error("Not connected to Parakeet.")
             yield ErrorFrame("Not connected to Parakeet.", fatal=True)
             return

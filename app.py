@@ -30,6 +30,7 @@ bot_image = (
         "fastapi[standard]",
         "huggingface_hub[hf_transfer]",
         "kokoro==0.9.4",
+        "pydub",
     )
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",
@@ -47,7 +48,6 @@ with bot_image.imports():
         IceServer,
         SmallWebRTCConnection,
     )
-
     from server.bot.moe_and_dal_bot import run_bot
     from server.bot.services.modal_kokoro_service import LocalKokoroTTSService
 

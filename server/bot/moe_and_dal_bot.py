@@ -33,6 +33,8 @@ from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 from .avatar.animation import MoeDalBotAnimation, get_frames
 
 from .services.modal_kokoro_service import LocalKokoroTTSService
+from .processors.fallback import error_detector, backup_gate
+
 
 import modal
 
@@ -194,15 +196,16 @@ async def run_bot(
 
     processors = [
         transport.input(),
-        rtvi,
+        rtvi
+    ]
+    primary_path = [
         stt,
         modal_rag,
         context_aggregator.user(),
         llm,
-        
     ]
     if enable_moe_and_dal:
-        processors += [
+        primary_path += [
             ParallelPipeline(
                 [moe_tts],
                 [dal_tts],
@@ -211,8 +214,21 @@ async def run_bot(
             ta,
         ]
     else:
-        processors.append(tts)
+        primary_path.append(tts)
 
+    primary_path.append(error_detector)
+
+    backup_path = [
+        backup_gate,
+        local_kokoro_tts,
+    ]
+
+    processors.append(
+        ParallelPipeline(
+            primary_path,
+            backup_path,
+        )
+    )
     processors += [
         transport.output(),
         context_aggregator.assistant(),

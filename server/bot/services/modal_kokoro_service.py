@@ -6,6 +6,8 @@ import re
 import sys
 import time
 
+from pydub import AudioSegment
+
 from pipecat.frames.frames import (
     ErrorFrame, 
     Frame, 
@@ -21,6 +23,8 @@ from server.bot.services.modal_services import ModalWebsocketTTSService
 from server.bot.processors.unison_speaker_mixer import TTSSpeakerAudioRawFrame
 
 from kokoro import KPipeline, KModel
+
+DEFAULT_VOICE = 'am_puck'
 
 try:
     logger.remove(0)
@@ -115,6 +119,74 @@ class LocalKokoroTTSService(TTSService):
 
         yield None
 
+    def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
+
+        if voice is None:
+            voice = DEFAULT_VOICE
+
+        try:
+            stream_start = time.perf_counter()
+            chunk_count = 0
+            first_chunk_time = None
+
+            # Generate streaming audio from the input text
+            print(f"🎤 Starting streaming generation for prompt: {prompt}")
+            
+            for (gs, ps, chunk) in self.pipeline(
+                prompt, 
+                voice=voice,
+                speed = speed,
+            ):
+                if first_chunk_time is None:
+                    print(f"⏱️  Time to first chunk: {(time.perf_counter() - stream_start):.3f} seconds")
+                
+                print(f"gs: {gs}, ps: {ps}, chunk len: {len(chunk)}")
+                chunk_count += 1
+                if chunk_count % 10 == 0:  # Log every 10th chunk
+                    print(f"📊 Streamed {chunk_count} chunks so far")
+                
+                try:
+                    
+                    # Ensure tensor is on CPU and convert to numpy for efficiency
+                    audio_numpy = chunk.cpu().numpy()
+
+                    audio_numpy = audio_numpy.clip(-1.0, 1.0) * 32767
+                    audio_numpy = audio_numpy.astype('int16')
+
+                    audio_segment = AudioSegment(
+                        audio_numpy.tobytes(),
+                        frame_rate=24000,
+                        sample_width=2,
+                        channels=1
+                    )
+
+                    def detect_leading_silence(sound, silence_threshold=-50.0, chunk_size=10):
+                        trim_ms = 0  # ms
+                        while sound[trim_ms:trim_ms+chunk_size].dBFS < silence_threshold:
+                            trim_ms += chunk_size
+
+                        return trim_ms - chunk_size # return the index of the last chunk with silence for padding
+
+                    speech_start_idx = detect_leading_silence(audio_segment)
+                    audio_segment = audio_segment[speech_start_idx:]
+                    yield audio_segment.raw_data
+                    
+                except Exception as e:
+                    print(f"❌ Error converting chunk {chunk_count}: {e}")
+                    print(f"   Chunk shape: {chunk.shape if hasattr(chunk, 'shape') else 'N/A'}")
+                    print(f"   Chunk type: {type(chunk)}")
+                    continue  # Skip this chunk and continue
+            
+            final_time = time.time()
+            print(f"⏱️  Total streaming time: {final_time - stream_start:.3f} seconds")
+            print(f"📊 Total chunks streamed: {chunk_count}")
+            print("✅ KokoroTTS streaming complete!")
+
+            
+        except Exception as e:
+            print(f"❌ Error creating stream generator: {e}")
+            raise
+
 class ModalKokoroTTSService(ModalWebsocketTTSService):
     def __init__(
         self, 
@@ -165,7 +237,7 @@ class ModalKokoroTTSService(ModalWebsocketTTSService):
     
     async def run_tts(self, prompt: str) -> AsyncGenerator[Frame, None]:
 
-        if not self._websocket:
+        if not self._connect_websocket_task.done() or not self._websocket:
             logger.error("Not connected to KokoroTTS.")
             yield ErrorFrame("Not connected to KokoroTTS.", fatal=True)
             return

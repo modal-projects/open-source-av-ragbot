@@ -6,7 +6,7 @@ import time
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
 
-from pipecat.frames.frames import StopFrame, CancelFrame, TTSSpeakFrame
+from pipecat.frames.frames import StopFrame, CancelFrame, ErrorFrame
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.utils.tracing.service_decorators import traced_llm
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -107,8 +107,7 @@ class ModalOpenAILLMService(OpenAILLMService):
     async def _process_context(self, context: OpenAILLMContext):
 
         if not self._connect_client_task.done():
-            await self.push_frame(TTSSpeakFrame("My apologies, I'm still setting up a few things. I'll respond as soon as I'm ready."))
-            return
+            await self.push_error(ErrorFrame("Not connected to Modal OpenAI compatible service."))
 
 
         await self.start_ttfb_metrics()

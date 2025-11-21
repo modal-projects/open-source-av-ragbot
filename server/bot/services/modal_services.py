@@ -120,12 +120,13 @@ class ModalWebsocketService(WebsocketService):
         
         if self.modal_tunnel_manager:
             logger.info(f"Using Modal Tunnels")
-        elif self._websocket_url:
+        if self._websocket_url:
             logger.info(f"Using websocket URL: {self._websocket_url}")
         else:
             raise Exception("Either modal_tunnel_manager or websocket_url must be provided")
 
         self._receive_task = None
+        self._connect_websocket_task = asyncio.create_task(self._connect())
 
         
     async def _report_error(self, error: ErrorFrame):
@@ -240,7 +241,7 @@ class ModalWebsocketTTSService(TTSService, ModalWebsocketService):
             frame: The start frame containing initialization parameters and metadata.
         """
         await super().start(frame)
-        await self._connect()
+        # await self._connect()
 
     async def stop(self, frame: EndFrame):
         """Stop the  STT service.
