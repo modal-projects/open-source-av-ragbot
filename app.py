@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from re import escape
+import sys
 import time
 
 import modal
@@ -39,6 +39,7 @@ bot_image = (
 )
 
 bot_sessions_dict = modal.Dict.from_name(f"{APP_NAME}-bot-sessions", create_if_missing=True)
+recordings_volume = modal.Volume.from_name(f"{APP_NAME}-recordings", create_if_missing=True)
 
 MINUTES = 60  # seconds in a minute
 
@@ -49,7 +50,7 @@ with bot_image.imports():
         SmallWebRTCConnection,
     )
     from server.bot.moe_and_dal_bot import run_bot
-    from server.bot.services.modal_kokoro_service import LocalKokoroTTSService
+    from server.bot.processors.canned_intro import CannedIntroPlayer
 
 @app.cls(
     image=bot_image,
@@ -57,7 +58,10 @@ with bot_image.imports():
     region=SERVICE_REGIONS,
     enable_memory_snapshot=True,
     max_inputs=1,
-    # min_containers=1,
+    volumes={"/recordings": recordings_volume},
+    scaledown_window=10,
+    min_containers=1,
+    buffer_containers=1
 )
 class ModalVoiceAssistant:
 
@@ -65,11 +69,7 @@ class ModalVoiceAssistant:
     def load(self):
         from server.bot.processors.modal_rag import ChromaVectorDB
         self.chroma_db = ChromaVectorDB()
-        self.local_kokoro_tts = LocalKokoroTTSService(
-            voice="am_puck",
-            speed=1.3,
-            device="cpu",
-        )
+        self.canned_intro_player = CannedIntroPlayer(audio_path="/recordings/canned_intro_converted_16000.wav")
 
     @modal.method()
     async def serve_bot(self, d: modal.Dict):
@@ -81,6 +81,13 @@ class ModalVoiceAssistant:
         Raises:
             RuntimeError: If the bot pipeline fails to start or encounters an error.
         """
+
+        try:
+            logger.remove(0)
+            logger.add(sys.stderr, level="DEBUG")
+        except ValueError:
+            # Handle the case where logger is already initialized
+            pass
         
 
         try:
@@ -109,8 +116,8 @@ class ModalVoiceAssistant:
                 run_bot(
                     webrtc_connection, 
                     self.chroma_db, 
+                    self.canned_intro_player,
                     enable_moe_and_dal=False,
-                    local_kokoro_tts=self.local_kokoro_tts
                 )
             )
 
@@ -150,7 +157,12 @@ with frontend_image.imports():
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 
-@app.function(image=frontend_image)
+@app.function(
+    image=frontend_image, 
+    enable_memory_snapshot=True, 
+    scaledown_window=10,
+    min_containers=1,
+)
 @modal.asgi_app()
 @modal.concurrent(max_inputs=100)
 def serve_frontend():
@@ -209,12 +221,30 @@ def serve_frontend():
 
 # warm up snapshots if needed
 if __name__ == "__main__":
-    bot_server = modal.Cls.from_name(APP_NAME, "ModalVoiceAssistant")
+
+    from urllib.request import urlopen
+
     num_cold_starts = 50
+
+    frontend_server = modal.Function.from_name(APP_NAME, "serve_frontend")
+    url = frontend_server.get_web_url()
+    print(f"Frontend server URL: {url}")
+    for _ in range(num_cold_starts):
+        start_time = time.time()
+        req = urlopen(url)
+        resp = req.read()
+        end_time = time.time()
+        print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
+        time.sleep(20.0) # allow container to drain
+    print(f"Frontend server cold starts: {num_cold_starts}")
+    
+    bot_server = modal.Cls.from_name(APP_NAME, "ModalVoiceAssistant")
     for _ in range(num_cold_starts):
         start_time = time.time()
         bot_server().ping.remote()
         end_time = time.time()
         print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
-        time.sleep(10.0) # allow container to drain
+        time.sleep(20.0) # allow container to drain
     print(f"ModalVoiceAssistant cold starts: {num_cold_starts}")
+
+    

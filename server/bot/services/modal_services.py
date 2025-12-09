@@ -122,7 +122,7 @@ class ModalWebsocketService(WebsocketService):
             logger.info(f"Using Modal Tunnels")
         if self._websocket_url:
             logger.info(f"Using websocket URL: {self._websocket_url}")
-        else:
+        if not self.modal_tunnel_manager and not self._websocket_url:
             raise Exception("Either modal_tunnel_manager or websocket_url must be provided")
 
         self._receive_task = None
@@ -284,7 +284,7 @@ class ModalWebsocketSegmentedSTTService(SegmentedSTTService, ModalWebsocketServi
             frame: The start frame containing initialization parameters and metadata.
         """
         await super().start(frame)
-        await self._connect()
+        # await self._connect()
         
 
     async def stop(self, frame: EndFrame):

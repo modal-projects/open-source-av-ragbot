@@ -4,7 +4,7 @@ import json
 
 import modal
 
-from server import SERVICE_REGIONS
+from server import SERVICE_REGIONS, TTS_GPU
 
 def chunk_audio(audio, desired_frame_size):
     for i in range(0, len(audio), desired_frame_size):
@@ -34,24 +34,27 @@ with image.imports():
     from pydub import AudioSegment
     import threading
     import uvicorn
+    from server.common.model_pool import ModelPool
+    import torch
 
 DEFAULT_VOICE = 'am_puck'
 UVICORN_PORT = 8000
-
+MAX_CONCURRENT = 10
 kokoro_hf_cache = modal.Volume.from_name("kokoro-tts-volume", create_if_missing=True)
 
 @app.cls(
     image=image,
     volumes={"/cache": kokoro_hf_cache},
-    gpu="L40S",
+    gpu=TTS_GPU,
     # NOTE, uncomment min_containers = 1 for testing and avoiding cold start times
-    # min_containers=1, 
+    min_containers=1, 
     region=SERVICE_REGIONS,
     timeout= 60 * 60,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
+    scaledown_window=10,
 )
-@modal.concurrent(max_inputs=10)
+@modal.concurrent(max_inputs=MAX_CONCURRENT)
 class KokoroTTS:
 
     @modal.enter(snap=True)
@@ -60,17 +63,28 @@ class KokoroTTS:
         self.tunnel_ctx = None
         self.tunnel = None
         self.websocket_url = None
-        
-        self.model = KModel().to("cuda").eval()
-        self.pipeline = KPipeline(model=self.model, lang_code='a', device="cuda")
+
+        self.model_pool = ModelPool()
+
+        # Create model pool with CUDA streams for GPU parallelism
+        for _ in range(MAX_CONCURRENT):
+            model = KModel().to("cuda").eval()
+            pipeline = KPipeline(model=model, lang_code='a', device="cuda")
+            stream = torch.cuda.Stream()
+            # Store (pipeline, stream) tuple
+            await self.model_pool.put((pipeline, stream))
+
+        for _ in range(MAX_CONCURRENT):
+            async with self.model_pool.acquire_model() as (pipeline, stream):
+                print("🔥 Warming up the model...")
+                warmup_runs = 6
+                warm_up_prompt = "Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job."
             
-        print("🔥 Warming up the model...")
-        warmup_runs = 6
-        warm_up_prompt = "Hello, we are Moe and Dal, your guides to Modal. We can help you get started with Modal, a platform that lets you run your Python code in the cloud without worrying about the infrastructure. We can walk you through setting up an account, installing the package, and running your first job."
-        for _ in range(warmup_runs):
-            for _ in self._stream_tts(warm_up_prompt):
-                pass
-        print("✅ Model warmed up!")
+                for _ in range(warmup_runs):
+                    async for _ in self._stream_tts(pipeline, stream, warm_up_prompt):
+                        pass
+
+        print("✅ Models warmed up!")
 
     @modal.enter(snap=False)
     async def restore(self):
@@ -108,9 +122,10 @@ class KokoroTTS:
                         prompt_msg = await prompt_queue.get()
                         print(f"Received prompt msg: {prompt_msg}")
                         start_time = time.perf_counter()
-                        for chunk in self._stream_tts(prompt_msg['text'], voice=prompt_msg['voice'], speed=prompt_msg['speed']):
-                            await audio_queue.put(chunk)
-                            print(f"Sending audio data to queue: {len(chunk)} bytes")
+                        async with self.model_pool.acquire_model() as (pipeline, stream):
+                            async for chunk in self._stream_tts(pipeline, stream, prompt_msg['text'], voice=prompt_msg['voice'], speed=prompt_msg['speed']):
+                                print(f"Sending audio data to queue: {len(chunk)} bytes")
+                                await audio_queue.put(chunk)
                         end_time = time.perf_counter()
                         print(f"Time taken to stream TTS: {end_time - start_time:.3f} seconds")
 
@@ -199,8 +214,20 @@ class KokoroTTS:
             self.tunnel_ctx = None
             self.tunnel = None
             self.websocket_url = None
-            
-    def _stream_tts(self, prompt: str, voice = None, speed = 1.3):
+    
+    def _chunk_to_numpy(self, chunk):
+        """
+        Converts GPU tensor chunk to numpy array.
+        This runs in a thread pool worker to avoid blocking the event loop.
+        """
+        # Ensure tensor is on CPU and convert to numpy for efficiency
+        audio_numpy = chunk.to("cpu", non_blocking=True).numpy()
+
+        audio_numpy = audio_numpy.clip(-1.0, 1.0) * 32767
+        audio_numpy = audio_numpy.astype('int16')
+        
+        return audio_numpy
+    async def _stream_tts(self, pipeline, stream, prompt: str, voice = None, speed = 1.3):
 
         if voice is None:
             voice = DEFAULT_VOICE
@@ -213,27 +240,60 @@ class KokoroTTS:
             # Generate streaming audio from the input text
             print(f"🎤 Starting streaming generation for prompt: {prompt}")
             
-            for (gs, ps, chunk) in self.pipeline(
-                prompt, 
-                voice=voice,
-                speed = speed,
-            ):
-                if first_chunk_time is None:
-                    print(f"⏱️  Time to first chunk: {(time.perf_counter() - stream_start):.3f} seconds")
+            # Create a queue for producer-consumer pattern
+            # This allows generator to run in worker thread while we consume in event loop
+            import queue
+            chunk_queue = queue.Queue(maxsize=3)  # Buffer a few chunks
+            
+            # Start generator in worker thread
+            # CRITICAL: Iterator must be created in worker thread with stream context!
+            def _generate_in_worker():
+                try:
+                    with torch.cuda.stream(stream):
+                        # Create iterator HERE in worker thread, not in main thread
+                        for (gs, ps, chunk) in pipeline(
+                            prompt,
+                            voice=voice,
+                            speed=speed,
+                        ):
+                            if chunk is None:
+                                continue
+                            
+                            # Convert audio tensor to numpy (blocking operation)
+                            audio_numpy = self._chunk_to_numpy(chunk)
+                            chunk_queue.put((gs, ps, audio_numpy))
+                    
+                    # Signal completion
+                    chunk_queue.put(None)
+                except Exception as e:
+                    print(f"Error in generation worker: {e}")
+                    chunk_queue.put(None)
+            
+            # Start worker thread (asyncio.to_thread returns immediately)
+            import threading
+            worker = threading.Thread(target=_generate_in_worker, daemon=True)
+            worker.start()
+            
+            # Stream chunks by consuming from queue
+            while True:
+                # Get next chunk from queue (blocks if empty, but in thread pool)
+                chunk_data = await asyncio.to_thread(chunk_queue.get)
                 
-                print(f"gs: {gs}, ps: {ps}, chunk len: {len(chunk)}")
+                if chunk_data is None:
+                    break  # Generator finished
+                
+                gs, ps, audio_numpy = chunk_data
+                
+                if first_chunk_time is None:
+                    first_chunk_time = time.perf_counter()
+                    print(f"⏱️  Time to first chunk: {(first_chunk_time - stream_start):.3f} seconds")
+                
                 chunk_count += 1
                 if chunk_count % 10 == 0:  # Log every 10th chunk
                     print(f"📊 Streamed {chunk_count} chunks so far")
                 
                 try:
-                    
-                    # Ensure tensor is on CPU and convert to numpy for efficiency
-                    audio_numpy = chunk.cpu().numpy()
-
-                    audio_numpy = audio_numpy.clip(-1.0, 1.0) * 32767
-                    audio_numpy = audio_numpy.astype('int16')
-
+                    # Fast post-processing in main thread (event loop)
                     audio_segment = AudioSegment(
                         audio_numpy.tobytes(),
                         frame_rate=24000,
@@ -241,7 +301,7 @@ class KokoroTTS:
                         channels=1
                     )
 
-                    def detect_leading_silence(sound, silence_threshold=-50.0, chunk_size=10):
+                    def detect_leading_silence(sound, silence_threshold=-60.0, chunk_size=10):
                         trim_ms = 0  # ms
                         while sound[trim_ms:trim_ms+chunk_size].dBFS < silence_threshold:
                             trim_ms += chunk_size
@@ -253,12 +313,11 @@ class KokoroTTS:
                     yield audio_segment.raw_data
                     
                 except Exception as e:
-                    print(f"❌ Error converting chunk {chunk_count}: {e}")
-                    print(f"   Chunk shape: {chunk.shape if hasattr(chunk, 'shape') else 'N/A'}")
-                    print(f"   Chunk type: {type(chunk)}")
+                    print(f"❌ Error processing chunk {chunk_count}: {e}")
+                    print(f"   Audio numpy shape: {audio_numpy.shape if hasattr(audio_numpy, 'shape') else 'N/A'}")
                     continue  # Skip this chunk and continue
             
-            final_time = time.time()
+            final_time = time.perf_counter()
             print(f"⏱️  Total streaming time: {final_time - stream_start:.3f} seconds")
             print(f"📊 Total chunks streamed: {chunk_count}")
             print("✅ KokoroTTS streaming complete!")
@@ -278,12 +337,12 @@ def get_kokoro_server_url():
 
 # warm up snapshots if needed
 if __name__ == "__main__":
-    kokoro_tts = modal.Cls.from_name("kokoro-tts", "KokoroTTS").with_options(scaledown_window=2)
+    kokoro_tts = modal.Cls.from_name("kokoro-tts", "KokoroTTS")
     num_cold_starts = 50
     for _ in range(num_cold_starts):
         start_time = time.time()
         kokoro_tts().ping.remote()
         end_time = time.time()
         print(f"Time taken to ping: {end_time - start_time:.3f} seconds")
-        time.sleep(10.0) # allow container to drain
+        time.sleep(20.0) # allow container to drain
     print(f"Kokoro TTS cold starts: {num_cold_starts}")

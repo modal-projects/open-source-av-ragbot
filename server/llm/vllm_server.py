@@ -3,7 +3,7 @@ import asyncio
 import uuid
 import modal
 
-from server import SERVICE_REGIONS
+from server import SERVICE_REGIONS, LLM_GPU
 
 vllm_image = (
     modal.Image.from_registry("nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04", add_python="3.12")
@@ -48,7 +48,7 @@ with vllm_image.imports():
 
 @app.cls(
     image=vllm_image,
-    gpu=["H100!"],
+    gpu=LLM_GPU,
     scaledown_window=15 * MINUTES,  # how long should we stay up with no requests?
     timeout=20 * MINUTES,  # how long should we wait for container start?
     # volumes={

@@ -37,12 +37,7 @@ class ModalParakeetSegmentedSTTService(ModalWebsocketSegmentedSTTService):
             frame: The start frame.
         """
         await super().start(frame)
-        # turn off vad
-        vad_msg = {
-            "type": "set_vad",
-            "vad": False
-        }
-        await self._websocket.send(json.dumps(vad_msg))
+
 
     async def _receive_messages(self):
         """Receive and process messages from WebSocket.
@@ -65,6 +60,7 @@ class ModalParakeetSegmentedSTTService(ModalWebsocketSegmentedSTTService):
             logger.error("Not connected to Parakeet.")
             yield ErrorFrame("Not connected to Parakeet.", fatal=True)
             return
+
         await self.start_ttfb_metrics()
         try:
             audio_msg = {

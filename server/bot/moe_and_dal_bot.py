@@ -32,8 +32,7 @@ from .processors.modal_rag import ModalRag, get_system_prompt, ChromaVectorDB
 
 from .avatar.animation import MoeDalBotAnimation, get_frames
 
-from .services.modal_kokoro_service import LocalKokoroTTSService
-from .processors.canned_intro import CannedIntroPlayer
+from .processors.canned_intro import CannedIntroPlayer, CannedIntroTriggerFrame
 
 
 import modal
@@ -56,8 +55,8 @@ _DEFAULT_ENABLE_VIDEO = False
 async def run_bot(
     webrtc_connection: SmallWebRTCConnection,
     chroma_db: ChromaVectorDB,
+    canned_intro_player: CannedIntroPlayer,
     enable_moe_and_dal: bool = _DEFAULT_ENABLE_VIDEO,
-    local_kokoro_tts: LocalKokoroTTSService = None,
 ):
     """Main bot execution function.
 
@@ -141,20 +140,20 @@ async def run_bot(
             modal_tunnel_manager=kokoro_tts_tunnel_manager_moe,
             speaker="moe",
             voice="am_puck",
-            speed=1.3,
+            speed=1.2,
         )
         dal_tts = ModalKokoroTTSService(
             modal_tunnel_manager=kokoro_tts_tunnel_manager_dal,
             speaker="dal",
             voice="am_fenrir",
-            speed=1.5,
+            speed=1.4,
         )
         speaker_mixer = UnisonSpeakerMixer(speakers=["moe", "dal"])
     else:
         tts = ModalKokoroTTSService(
             modal_tunnel_manager=kokoro_tts_tunnel_manager,
             voice="am_puck",
-            speed=1.35,
+            speed=1.2,
         )
 
 
@@ -166,10 +165,6 @@ async def run_bot(
             "role": "system", 
             "content": get_system_prompt(enable_moe_and_dal=enable_moe_and_dal),
         },
-        {
-            "role": "user",
-            "content": "Hi, could the two of you introduce yourselves?",
-        }
     ]
 
     # Set up conversation context and management
@@ -205,7 +200,7 @@ async def run_bot(
         primary_path.append(tts)
 
     canned_intro_path = [
-        CannedIntroPlayer(audio_url="https://cdn.modal.com/audio/canned_intro.wav"),
+        canned_intro_player,
     ]
 
     processors.append(
@@ -235,7 +230,6 @@ async def run_bot(
     async def on_client_ready(rtvi):
         logger.info("Pipecat client ready.")
         await rtvi.set_bot_ready()
-        await task.queue_frame(LLMRunFrame())
         
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
@@ -246,7 +240,9 @@ async def run_bot(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Pipecat Client connected")
-        await task.queue_frame(get_frames("listening"))
+        if enable_moe_and_dal:
+            await task.queue_frame(get_frames("listening"))
+        await task.queue_frame(CannedIntroTriggerFrame())
         
     runner = PipelineRunner()
     await runner.run(task)

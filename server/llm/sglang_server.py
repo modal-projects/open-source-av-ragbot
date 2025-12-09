@@ -1,18 +1,15 @@
-from __future__ import annotations
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
-import os
-import sys
+import os 
 from typing import Final
 import modal
 import asyncio
 
-from server import SERVICE_REGIONS
+from server import SERVICE_REGIONS, LLM_GPU
 
 APP_NAME: Final[str] = "sglang-server"
 MODEL_NAME: Final[str] = "Qwen/Qwen3-4B-Instruct-2507"
 SGLANG_PORT: Final[int] = 8092
+MAX_CONCURRENT = 10
 
 HF_CACHE_VOL: Final[modal.Volume] = modal.Volume.from_name(
     "huggingface-cache", create_if_missing=True
@@ -40,7 +37,6 @@ sglang_image: Final[modal.Image] = (
             "TORCHINDUCTOR_CACHE_DIR": f"/root/.cache/torch/",
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "MODAL_SGL_URL": "http://127.0.0.1:8092/v1",
-            "MODAL_LOGLEVEL": "DEBUG",
         }
     )
     .workdir("/app")
@@ -75,21 +71,20 @@ with sglang_image.imports():
     image=sglang_image,
     cpu=64,
     memory=256*1024,
-    gpu="H100!",
+    gpu=LLM_GPU,
     timeout=10 * 60,
     volumes={
         HF_CACHE_PATH: HF_CACHE_VOL,
     },
-    # max_inputs=1,
     secrets=[hf_secret] if hf_secret is not None else [],
     enable_memory_snapshot=True,
     experimental_options={
         "enable_gpu_snapshot": True,
     },
     scaledown_window=10,
-    # min_containers=1,
     region=SERVICE_REGIONS,
 )
+@modal.concurrent(max_inputs=MAX_CONCURRENT)
 class SGLangServer:
     @modal.enter(snap=True)
     def _startup(self) -> None:
@@ -113,6 +108,8 @@ class SGLangServer:
             "1",
             "--context-length",
             "8192",
+            "--max-running-requests",
+            str(MAX_CONCURRENT),
             # "--attention-backend",
             # "fa3",
             "--enable-memory-saver",
@@ -283,6 +280,6 @@ if __name__ == "__main__":
     num_cold_starts = 50
     for _ in range(num_cold_starts):
         make_request(sglang_server)
-        time.sleep(30.0) # allow container to drain
+        time.sleep(20.0) # allow container to drain
     print(f"SGLang cold starts: {num_cold_starts}")
 
