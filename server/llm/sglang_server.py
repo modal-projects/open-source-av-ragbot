@@ -83,6 +83,7 @@ with sglang_image.imports():
     },
     scaledown_window=10,
     region=SERVICE_REGIONS,
+    min_containers=1,
 )
 @modal.concurrent(max_inputs=MAX_CONCURRENT)
 class SGLangServer:

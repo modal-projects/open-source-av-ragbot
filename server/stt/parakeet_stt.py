@@ -75,7 +75,6 @@ with image.imports():
     import threading
     import uvicorn
     from fastapi import FastAPI
-    from server.common.model_pool import ModelPool
 
 MAX_CONCURRENT = 10
 
@@ -103,55 +102,60 @@ class Transcriber:
         # silence chatty logs from nemo
         logging.getLogger("nemo_logger").setLevel(logging.CRITICAL)
 
-        self.model_pool = ModelPool()
+        self.use_vad = False
+        self.model = nemo_asr.models.ASRModel.from_pretrained(
+            model_name="nvidia/parakeet-tdt-0.6b-v3"
+        )
+
+
+        self.model.to(torch.bfloat16)
+        self.model.eval()
+        # Configure decoding strategy
+        if self.model.cfg.decoding.strategy != "beam":
+            self.model.cfg.decoding.strategy = "greedy_batch"
+            self.model.change_decoding_strategy(self.model.cfg.decoding)
+
+        self.silero_vad, utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=True
+        )
         
-        # Create model pool for concurrent inference
-        # Note: We don't use explicit CUDA streams with NeMo models because they
-        # manage streams internally. External stream contexts cause CUDA errors.
-        for _ in range(MAX_CONCURRENT):
-            model = nemo_asr.models.ASRModel.from_pretrained(
-                model_name="nvidia/parakeet-tdt-0.6b-v3"
-            )
+        (
+            self.get_speech_timestamps,
+            self.save_audio,
+            self.read_audio,
+            self.VADIterator,
+            self.collect_chunks
+        ) = utils
 
-            model.to(torch.bfloat16)
-            model.eval()
-            # Configure decoding strategy
-            if model.cfg.decoding.strategy != "beam":
-                model.cfg.decoding.strategy = "greedy_batch"
-                model.change_decoding_strategy(model.cfg.decoding)
+        # warm up gpu
+        AUDIO_URL = "https://github.com/voxserv/audio_quality_testing_samples/raw/refs/heads/master/mono_44100/156550__acclivity__a-dream-within-a-dream.wav"
+        audio_bytes = urlopen(AUDIO_URL).read()
+        if audio_bytes.startswith(b"RIFF"):
+            audio_bytes = audio_bytes[44:]
+        
+        # Convert raw bytes to int16 numpy array first
+        audio_data = np.frombuffer(audio_bytes, dtype=np.int16)
+        
+        # Then chunk the audio data (not the raw bytes)
+        chunk_size_seconds = 1
+        chunk_size = SAMPLE_RATE * chunk_size_seconds  # 5 seconds at 16kHz
+        
+        audio_chunks = [torch.from_numpy(audio_data[i:i+chunk_size]) for i in range(0, len(audio_data), chunk_size)]
+        audio_chunks = audio_chunks[:10]
 
-            await self.model_pool.put(model)
-
-        for _ in range(MAX_CONCURRENT):
-
-            async with self.model_pool.acquire_model() as model:
-                # warm up gpu
-                AUDIO_URL = "https://github.com/voxserv/audio_quality_testing_samples/raw/refs/heads/master/mono_44100/156550__acclivity__a-dream-within-a-dream.wav"
-                audio_bytes = urlopen(AUDIO_URL).read()
-                if audio_bytes.startswith(b"RIFF"):
-                    audio_bytes = audio_bytes[44:]
-                
-                # Convert raw bytes to int16 numpy array first
-                audio_data = np.frombuffer(audio_bytes, dtype=np.int16)
-                
-                # Then chunk the audio data (not the raw bytes)
-                chunk_size_seconds = 1
-                chunk_size = SAMPLE_RATE * chunk_size_seconds  # 5 seconds at 16kHz
-                
-                audio_chunks = [torch.from_numpy(audio_data[i:i+chunk_size]) for i in range(0, len(audio_data), chunk_size)]
-                audio_chunks = audio_chunks[:10]
-
-                times = []
-                with torch.autocast("cuda", enabled=True, dtype=torch.bfloat16), torch.inference_mode(), torch.no_grad():
-                    for chunk in audio_chunks:
-                        start_time = time.perf_counter()
-                        model.transcribe(chunk)
-                        end_time = time.perf_counter()
-                        times.append(end_time - start_time)
-                print(f"Warmup transcription quantile values ({chunk_size_seconds} second chunks):")
-                print(f"p5: {np.percentile(times, 5)}")
-                print(f"p50: {np.percentile(times, 50)}")
-                print(f"p95: {np.percentile(times, 95)}")
+        times = []
+        with torch.autocast("cuda", enabled=True, dtype=torch.bfloat16), torch.inference_mode(), torch.no_grad():
+            for chunk in audio_chunks:
+                start_time = time.perf_counter()
+                self.model.transcribe(chunk)
+                end_time = time.perf_counter()
+                times.append(end_time - start_time)
+        print(f"Warmup transcription quantile values ({chunk_size_seconds} second chunks):")
+        print(f"p5: {np.percentile(times, 5)}")
+        print(f"p50: {np.percentile(times, 50)}")
+        print(f"p95: {np.percentile(times, 95)}")
 
         print("GPU warmed up")
 
@@ -197,10 +201,9 @@ class Transcriber:
 
                     print(f"transcribing audio data")
                     start_time = time.perf_counter()                        
-                    async with self.model_pool.acquire_model() as model:
-                        print(f"acquired model")
-                        transcript = await self.transcribe(model, audio_data)
-                        print(f"transcribed audio data")
+                    
+                    transcript = self.transcribe(audio_data)
+                    print(f"transcribed audio data: {transcript}")
                     await transcription_queue.put(transcript)
 
                     end_time = time.perf_counter()
@@ -270,34 +273,13 @@ class Transcriber:
         except Exception as e:
             print(f"Error running tunnel client: {type(e)}: {e}")
 
-    def _transcribe_in_thread(self, model, audio_data) -> str:
-        """
-        Runs transcription in thread pool to avoid blocking event loop.
-        All blocking operations happen here:
-        - Model inference on GPU
-        - GPU synchronization
-        
-        Note: We don't use explicit CUDA streams with NeMo models because they
-        manage streams internally. Setting an external stream context causes
-        "CUDA error: device-side assert triggered" due to index out of bounds
-        errors in NeMo's internal operations. NeMo will handle GPU parallelism
-        internally when multiple model instances are used concurrently.
-        
-        Note: NoStdStreams is NOT used here because it modifies global sys.stdout/stderr
-        which affects all threads. In a multi-threaded environment, this causes
-        "I/O operation on closed file" errors when other threads try to print.
-        """
-        # Don't use NoStdStreams in thread pool - it affects global stdout/stderr
-        with torch.autocast("cuda", enabled=True, dtype=torch.bfloat16), torch.inference_mode(), torch.no_grad():
-            output = model.transcribe([audio_data])
+    def transcribe(self, audio_data) -> str:
+
+        with NoStdStreams():  # hide output, see https://github.com/NVIDIA/NeMo/discussions/3281#discussioncomment-2251217
+            with torch.autocast("cuda", enabled=True, dtype=torch.bfloat16), torch.inference_mode(), torch.no_grad():
+                output = self.model.transcribe([audio_data])
 
         return output[0].text
-    
-    async def transcribe(self, model, audio_data) -> str:
-        """
-        Async wrapper for transcription that runs blocking work in thread pool.
-        """
-        return await asyncio.to_thread(self._transcribe_in_thread, model, audio_data)
 
     @modal.asgi_app()
     def webapp(self):
